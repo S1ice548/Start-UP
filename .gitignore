@@ -1,0 +1,12 @@
+node_modules/
+dist/
+vite-dev.log
+vite-dev-error.log
+.env
+.env.*
+!.env.example
+
+# AI tool local config (may contain API keys)
+.claude/
+.codex/
+.continue/

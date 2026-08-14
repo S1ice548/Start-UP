@@ -15,6 +15,7 @@ import CompareStrategiesPage from './components/CompareStrategiesPage';
 import AddEditDebtPage from './components/AddEditDebtPage';
 import MilestonesPage from './components/MilestonesPage';
 import PaymentHistoryPage from './components/PaymentHistoryPage';
+import CashflowPage from './components/CashflowPage';
 
 import { INITIAL_DEBTS, getViewDataForUser, saveUserDataToStorage, resetUserDataStorage } from './data/mockData';
 import { calculateDebtPayoff } from './utils/debtEngine';
@@ -244,6 +245,7 @@ function AppContent({ isAdmin, user, onLogout }) {
           {(activeTab === 'calculator' || activeTab === 'ocr' || activeTab === 'ai' || activeTab === 'notifications') && (
             <HeroOverview
               debts={debts}
+              paymentLogs={paymentLogs}
               result={result}
               onSelectTab={setActiveTab}
             />
@@ -280,6 +282,7 @@ function AppContent({ isAdmin, user, onLogout }) {
               showToast={showToast}
               onBack={() => setActiveTab('calculator')}
               userName={user?.name || 'User'}
+              manualStrategy={manualStrategy}
             />
           )}
 
@@ -346,9 +349,23 @@ function AppContent({ isAdmin, user, onLogout }) {
           {activeTab === 'milestones' && (
             <MilestonesPage
               debts={debts}
+              paymentLogs={paymentLogs}
               result={result}
               extraBudget={extraBudget}
               onBack={() => setActiveTab('calculator')}
+            />
+          )}
+
+          {/* Dedicated Page 9: Cash Flow & Risk Early Warning */}
+          {activeTab === 'cashflow' && (
+            <CashflowPage
+              debts={debts}
+              setDebts={setDebts}
+              paymentLogs={paymentLogs}
+              setPaymentLogs={setPaymentLogs}
+              extraBudget={extraBudget}
+              onBack={() => setActiveTab('calculator')}
+              userName={user?.name || 'User'}
             />
           )}
 

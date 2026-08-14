@@ -1,15 +1,15 @@
 import React from 'react';
 import { ArrowLeft, Trophy, CheckCircle2, Award, Flame, Unlock, Lock, Sparkles, Home, ChevronRight } from 'lucide-react';
-import { formatCurrency } from '../utils/debtEngine';
+import { calculateDebtProgress, formatCurrency } from '../utils/debtEngine';
 
-export default function MilestonesPage({ debts, result, extraBudget, onBack }) {
-  const totalBalance = debts.reduce((sum, d) => sum + Number(d.balance), 0);
-  const originalBalanceTotal = debts.reduce((sum, d) => sum + Number(d.originalBalance || (d.balance * 1.3)), 0);
-  const totalPaid = Math.max(0, originalBalanceTotal - totalBalance);
+export default function MilestonesPage({ debts, paymentLogs = [], result, extraBudget, onBack }) {
+  // Progress computed from REAL user data (payment logs), consistent across all pages
+  const progress = calculateDebtProgress(debts, paymentLogs);
+  const totalBalance = progress.totalRemaining;
+  const originalBalanceTotal = progress.totalOriginal;
+  const totalPaid = progress.totalPaid;
   
-  const progressPercent = originalBalanceTotal > 0 
-    ? Math.min(100, Math.round((totalPaid / originalBalanceTotal) * 100))
-    : 0;
+  const progressPercent = progress.progressPercent;
 
   const closedDebtsCount = debts.filter(d => Number(d.balance) <= 0).length;
   const hasClosedAny = closedDebtsCount > 0;

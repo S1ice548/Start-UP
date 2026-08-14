@@ -186,6 +186,48 @@ function evaluateAiBestStrategy(simulations, baselineInterest) {
 }
 
 /**
+ * Strategy ordering rule: which debt receives the extra payment first.
+ * Paid-off debts always sort last. Extracted so both the simulation and the
+ * Focus Target use the exact same priority rule.
+ */
+export function strategyComparator(strategyKey) {
+  return (a, b) => {
+    // Keep paid off debts at end
+    if (a.balance <= 0 && b.balance > 0) return 1;
+    if (b.balance <= 0 && a.balance > 0) return -1;
+    if (a.balance <= 0 && b.balance <= 0) return 0;
+
+    switch (strategyKey) {
+      case "avalanche":
+        // Highest interest rate first
+        return b.interestRate - a.interestRate;
+
+      case "snowball":
+        // Smallest balance first
+        return a.balance - b.balance;
+
+      case "tsunami":
+        // Free cashflow: Highest min payment first
+        return b.minPayment - a.minPayment;
+
+      case "snowflake":
+        // Micro-wins: Smallest remaining balance with heavy bonus for debts < 25,000
+        const weightA = a.balance < 25000 ? a.balance * 0.4 : a.balance;
+        const weightB = b.balance < 25000 ? b.balance * 0.4 : b.balance;
+        return weightA - weightB;
+
+      case "landslide":
+        // Reduce the largest principal burden first; use interest rate as a tie-breaker.
+        if (b.balance !== a.balance) return b.balance - a.balance;
+        return b.interestRate - a.interestRate;
+
+      default:
+        return b.interestRate - a.interestRate;
+    }
+  };
+}
+
+/**
  * Core Simulation Engine per strategy
  */
 function simulatePayoff(initialDebts, extraMonthlyBudget, strategy) {
@@ -209,42 +251,7 @@ function simulatePayoff(initialDebts, extraMonthlyBudget, strategy) {
   const monthlyTimeline = [];
 
   // Custom Sorter per Strategy
-  const sortDebts = (list) => {
-    return list.sort((a, b) => {
-      // Keep paid off debts at end
-      if (a.balance <= 0 && b.balance > 0) return 1;
-      if (b.balance <= 0 && a.balance > 0) return -1;
-      if (a.balance <= 0 && b.balance <= 0) return 0;
-
-      switch (strategy) {
-        case "avalanche":
-          // Highest interest rate first
-          return b.interestRate - a.interestRate;
-
-        case "snowball":
-          // Smallest balance first
-          return a.balance - b.balance;
-
-        case "tsunami":
-          // Free cashflow: Highest min payment first
-          return b.minPayment - a.minPayment;
-
-        case "snowflake":
-          // Micro-wins: Smallest remaining balance with heavy bonus for debts < 25,000
-          const weightA = a.balance < 25000 ? a.balance * 0.4 : a.balance;
-          const weightB = b.balance < 25000 ? b.balance * 0.4 : b.balance;
-          return weightA - weightB;
-
-        case "landslide":
-          // Reduce the largest principal burden first; use interest rate as a tie-breaker.
-          if (b.balance !== a.balance) return b.balance - a.balance;
-          return b.interestRate - a.interestRate;
-
-        default:
-          return b.interestRate - a.interestRate;
-      }
-    });
-  };
+  const sortDebts = (list) => list.sort(strategyComparator(strategy));
 
   while (monthCount < MAX_MONTHS) {
     const activeDebts = currentDebts.filter(d => d.balance > 0);
@@ -350,4 +357,91 @@ function simulatePayoff(initialDebts, extraMonthlyBudget, strategy) {
 
 export function formatCurrency(amount) {
   return new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB', maximumFractionDigits: 0 }).format(amount || 0);
+}
+
+/**
+ * Top-priority ACTIVE debt for a strategy — i.e. what the user should pay
+ * first right now (highest interest for avalanche, smallest balance for
+ * snowball, etc.). Uses the strategy's ordering rule over the CURRENT debts,
+ * NOT the end-of-simulation order of `debtPayoffDetails` (which reflects the
+ * last debt standing and does not change with the method on real data).
+ */
+export function getPriorityDebtId(debts = [], strategyKey = null) {
+  const active = (debts || []).filter(d => d && Number(d.balance) > 0);
+  if (active.length === 0) return '';
+  const key = strategyKey && STRATEGIES_INFO[strategyKey] ? strategyKey : 'avalanche';
+  active.sort(strategyComparator(key));
+  return active[0].id;
+}
+
+/**
+ * Identify the #1 Focus Debt for the active strategy (see getPriorityDebtId).
+ * Falls back to the first debt in the list when nothing matches.
+ *
+ * Used by the payment page (and guarded by regression tests) so the focus
+ * target always matches the pay method the user chose.
+ */
+export function getFocusDebtId(result, debts = []) {
+  return getPriorityDebtId(debts, result?.activeStrategyKey) || debts[0]?.id || '';
+}
+
+/**
+ * Calculate REAL debt progress from actual user data.
+ *
+ * The "original balance" of each debt is derived from the actual payment logs
+ * (original = current balance + total amount paid for that debt), so the
+ * "paid / remaining" figures always match the user's real data instead of an
+ * invented multiplier. If a debt was closed (balance = 0) it counts as fully paid.
+ *
+ * Returns:
+ * {
+ *   totalOriginal, totalPaid, totalRemaining, progressPercent,
+ *   perDebt: [{ debt, original, paid, remaining, percent }]
+ * }
+ */
+export function calculateDebtProgress(debts = [], paymentLogs = []) {
+  const logsByDebtId = {};
+  (paymentLogs || []).forEach(log => {
+    const key = log && log.debtId;
+    if (!key) return;
+    logsByDebtId[key] = (logsByDebtId[key] || 0) + (Number(log.amountPaid) || 0);
+  });
+
+  let totalOriginal = 0;
+  let totalPaid = 0;
+  let totalRemaining = 0;
+
+  const perDebt = (debts || []).map(debt => {
+    const balance = Math.max(0, Number(debt.balance) || 0);
+    const paidFromLogs = logsByDebtId[debt.id] || 0;
+
+    // Use the stored original balance when available, otherwise derive it from
+    // the actual payment history: original = remaining + total paid.
+    const original = Number(debt.originalBalance) > 0
+      ? Number(debt.originalBalance)
+      : balance + paidFromLogs;
+
+    // Paid amount must stay within [0, original] so a manual balance increase
+    // (or a debt that was already lower than the logs suggest) never skews totals.
+    const paid = Math.max(0, Math.min(original, original - balance));
+    const percent = original > 0 ? Math.min(100, Math.round((paid / original) * 100)) : (balance <= 0 ? 100 : 0);
+
+    totalOriginal += original;
+    totalPaid += paid;
+    totalRemaining += balance;
+
+    return { debt, original, paid, remaining: balance, percent };
+  });
+
+  const progressPercent = totalOriginal > 0
+    ? Math.min(100, Math.round((totalPaid / totalOriginal) * 100))
+    : 0;
+
+  return {
+    totalOriginal,
+    totalPaid,
+    totalRemaining,
+    progressPercent,
+    perDebt
+  };
 }

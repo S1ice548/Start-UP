@@ -15,7 +15,7 @@ import {
   Check,
   Download
 } from 'lucide-react';
-import { calculateDebtPayoff, formatCurrency, STRATEGIES_INFO } from '../utils/debtEngine';
+import { calculateDebtPayoff, calculateDebtProgress, getFocusDebtId, formatCurrency, STRATEGIES_INFO } from '../utils/debtEngine';
 import { exportPaymentHistoryToExcel } from '../utils/excelExport';
 
 export default function PaymentHistoryPage({ 
@@ -27,16 +27,15 @@ export default function PaymentHistoryPage({
   initialPaymentAmount = '',
   showToast,
   onBack,
-  userName = 'User'
+  userName = 'User',
+  manualStrategy = null
 }) {
   // Calculate Payoff Result to identify the #1 Focus Debt recommended by AI/Strategy
-  const result = calculateDebtPayoff(debts, extraBudget);
+  // Uses the user's chosen pay method (manualStrategy) so the Focus Target matches it
+  const result = calculateDebtPayoff(debts, extraBudget, manualStrategy);
   
-  // Find top debt to focus on (first active debt in payoff order)
-  const focusDebtId = result.debtPayoffDetails.find(d => {
-    const original = debts.find(orig => orig.id === d.id);
-    return original && Number(original.balance) > 0;
-  })?.id || debts[0]?.id || '';
+  // Find top debt to focus on (first active debt in payoff order for the active strategy)
+  const focusDebtId = getFocusDebtId(result, debts);
 
   const focusDebtObj = debts.find(d => d.id === focusDebtId);
 
@@ -53,14 +52,13 @@ export default function PaymentHistoryPage({
     }
   }, [focusDebtId]);
 
-  // Overall Payoff Calculations
-  const totalBalance = debts.reduce((sum, d) => sum + Number(d.balance), 0);
-  const originalBalanceTotal = debts.reduce((sum, d) => sum + Number(d.originalBalance || (d.balance * 1.25)), 0);
-  const totalPaid = Math.max(0, originalBalanceTotal - totalBalance);
+  // Overall Payoff Calculations (REAL data from payment logs, consistent everywhere)
+  const progress = calculateDebtProgress(debts, paymentLogs);
+  const totalBalance = progress.totalRemaining;
+  const originalBalanceTotal = progress.totalOriginal;
+  const totalPaid = progress.totalPaid;
   
-  const progressPercent = originalBalanceTotal > 0 
-    ? Math.min(100, Math.round((totalPaid / originalBalanceTotal) * 100))
-    : 0;
+  const progressPercent = progress.progressPercent;
 
   // Handle Submit Payment Log
   const handleRecordPayment = (e) => {
@@ -305,10 +303,12 @@ export default function PaymentHistoryPage({
 
         <div className="space-y-4">
           {debts.map((debt, index) => {
-            const original = Number(debt.originalBalance || (debt.balance * 1.25));
+            const progressItem = progress.perDebt.find(p => p.debt.id === debt.id)
+              || { original: Number(debt.balance), paid: 0, remaining: Number(debt.balance), percent: 0 };
+            const original = progressItem.original;
             const currentBal = Number(debt.balance);
-            const paidForThis = Math.max(0, original - currentBal);
-            const itemPercent = original > 0 ? Math.min(100, Math.round((paidForThis / original) * 100)) : 100;
+            const paidForThis = progressItem.paid;
+            const itemPercent = progressItem.percent;
             const detail = result.debtPayoffDetails.find(d => d.id === debt.id);
             const isFocusTarget = debt.id === focusDebtId && currentBal > 0;
 

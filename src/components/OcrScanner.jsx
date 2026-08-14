@@ -1,26 +1,28 @@
 import React, { useState } from 'react';
-import { 
-  Upload, 
-  Camera, 
-  FileText, 
-  CheckCircle, 
-  Sparkles, 
-  Scan, 
-  Trash2, 
-  ArrowRight, 
+import {
+  Upload,
+  Camera,
+  FileText,
+  CheckCircle,
+  Sparkles,
+  Scan,
+  Trash2,
+  ArrowRight,
   AlertCircle,
   Image as ImageIcon,
   CheckSquare,
   Square,
   Loader2
 } from 'lucide-react';
+import { createWorker } from 'tesseract.js';
 import { MOCK_OCR_SAMPLES } from '../data/mockData';
-import { formatCurrency } from '../utils/debtEngine';
+import { parseOcrText } from '../utils/ocrParser';
 
 export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
+  const [scanError, setScanError] = useState('');
   const [scanResults, setScanResults] = useState([]);
   const [selectedResultIds, setSelectedResultIds] = useState([]);
   const [cameraActive, setCameraActive] = useState(false);
@@ -41,7 +43,7 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
     setSelectedFiles(prev => [...prev, ...newFiles]);
   };
 
-  // Load sample multi-image mock data
+  // Load sample multi-image mock data (preset demo data, clearly labeled)
   const loadMockSamples = () => {
     const mockFiles = MOCK_OCR_SAMPLES.map(sample => ({
       id: sample.id,
@@ -54,63 +56,115 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
     setSelectedFiles(mockFiles);
   };
 
-  // Simulate Multi-Image OCR Scan
-  const startScanProcess = () => {
+  // Real Multi-Image OCR Scan using Tesseract.js (runs inside the browser)
+  const startScanProcess = async () => {
     if (selectedFiles.length === 0) return;
 
     setIsScanning(true);
-    setScanProgress(10);
+    setScanError('');
+    setScanProgress(0);
     setScanResults([]);
+    setSelectedResultIds([]);
 
-    let current = 0;
-    const interval = setInterval(() => {
-      current += 20;
-      setScanProgress(Math.min(current, 90));
+    // Files with preset demo data (sample images) skip OCR
+    const presetFiles = selectedFiles.filter(f => f.extracted);
+    const scanFiles = selectedFiles.filter(f => !f.extracted);
 
-      if (current >= 100) {
-        clearInterval(interval);
-        setScanProgress(100);
-        setIsScanning(false);
+    const results = presetFiles.map(f => ({
+      id: f.id,
+      fileName: f.name,
+      previewUrl: f.previewUrl,
+      isMock: true,
+      confidence: Math.round((f.extracted.confidence || 0.98) * 100),
+      text: '',
+      hasText: false,
+      data: { ...f.extracted }
+    }));
 
-        // Generate extracted data for each selected file
-        const results = selectedFiles.map((fileItem, index) => {
-          if (fileItem.extracted) {
-            return {
-              id: fileItem.id,
-              fileName: fileItem.name,
-              previewUrl: fileItem.previewUrl,
-              data: { ...fileItem.extracted }
-            };
+    let scanned = 0;
+    if (scanFiles.length > 0) {
+      let worker = null;
+      const ocrOptions = {
+        logger: (m) => {
+          if (m.status === 'recognizing text' && m.progress !== undefined) {
+            const overall = Math.min(99, Math.round(((scanned + m.progress) / scanFiles.length) * 100));
+            setScanProgress(overall);
           }
-
-          // Dynamic mock extraction for user-uploaded custom images
-          const mockLenders = ['ธนาคารกรุงเทพ', 'ธนาคารกสิกรไทย', 'ธนาคารกรุงศรี', 'AEON', 'KTC'];
-          const mockTypes = ['บัตรเครดิต', 'สินเชื่อส่วนบุคคล', 'บัตรกดเงินสด'];
-          const randomLender = mockLenders[index % mockLenders.length];
-          const randomType = mockTypes[index % mockTypes.length];
-          const randomBalance = Math.floor(Math.random() * 60000) + 15000;
-          const randomInterest = [16.0, 18.0, 24.0, 25.0][index % 4];
-
-          return {
-            id: fileItem.id,
-            fileName: fileItem.name,
-            previewUrl: fileItem.previewUrl,
-            data: {
-              name: `${randomType} ${randomLender}`,
-              lender: randomLender,
-              balance: randomBalance,
-              interestRate: randomInterest,
-              minPayment: Math.round(randomBalance * 0.05),
-              dueDate: `${10 + (index * 5)} ของทุกเดือน`,
-              confidence: 0.95 + (index * 0.01)
-            }
-          };
+        }
+      };
+      try {
+        // First run downloads the OCR model + language data (~15 MB) from CDN.
+        // Thai + English are tried together; if EITHER language pack fails to
+        // download the whole worker rejects, so retry English-only to keep
+        // reading working (Thai text will just be skipped in that case).
+        try {
+          worker = await createWorker(['tha', 'eng'], 1, ocrOptions);
+        } catch (langErr) {
+          console.warn('Thai+English OCR worker failed, retrying with English only:', langErr);
+          worker = await createWorker('eng', 1, ocrOptions);
+        }
+      } catch (e) {
+        console.error('Failed to load Tesseract worker:', e);
+        setScanError(
+          'ไม่สามารถโหลดโมเดล AI อ่านภาพได้ (ครั้งแรกต้องเชื่อมต่ออินเทอร์เน็ตเพื่อดาวน์โหลดโมเดล) — ' +
+          'กรุณากรอกข้อมูลใบแจ้งหนี้ด้วยตนเองด้านล่าง หรือลองใหม่ภายหลัง'
+        );
+        // Fall back to manual-entry cards so the user is never blocked
+        scanFiles.forEach(f => {
+          results.push({
+            id: f.id,
+            fileName: f.name,
+            previewUrl: f.previewUrl,
+            isMock: false,
+            confidence: 0,
+            text: '',
+            hasText: false,
+            data: { name: '', lender: '', balance: '', interestRate: '', minPayment: '', dueDate: '' }
+          });
         });
-
         setScanResults(results);
         setSelectedResultIds(results.map(r => r.id));
+        setScanProgress(100);
+        setIsScanning(false);
+        return;
       }
-    }, 400);
+
+      try {
+        for (let i = 0; i < scanFiles.length; i++) {
+          const f = scanFiles[i];
+          const imageSource = f.file || f.previewUrl; // File object or image URL
+          let text = '';
+          let confidence = 0;
+          try {
+            const { data } = await worker.recognize(imageSource);
+            text = (data.text || '').trim();
+            confidence = Math.round(data.confidence || 0);
+          } catch (e) {
+            console.warn(`OCR recognize failed for ${f.name}:`, e);
+          }
+
+          const parsed = parseOcrText(text);
+          results.push({
+            id: f.id,
+            fileName: f.name,
+            previewUrl: f.previewUrl,
+            isMock: false,
+            confidence,
+            text,
+            hasText: parsed.hasText,
+            data: parsed.data
+          });
+          scanned += 1;
+        }
+      } finally {
+        try { await worker.terminate(); } catch (e) { /* ignore */ }
+      }
+    }
+
+    setScanResults(results);
+    setSelectedResultIds(results.map(r => r.id));
+    setScanProgress(100);
+    setIsScanning(false);
   };
 
   // Toggle selection for import
@@ -122,30 +176,38 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
     }
   };
 
+  // Edit an auto-filled field before importing
+  const updateResultField = (id, field, value) => {
+    setScanResults(prev => prev.map(r => r.id === id ? { ...r, data: { ...r.data, [field]: value } } : r));
+  };
+
   // Import selected debts to Calculator
   const handleConfirmImport = () => {
     const itemsToImport = scanResults
       .filter(r => selectedResultIds.includes(r.id))
       .map(r => ({
         id: `scanned-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-        name: r.data.name,
-        lender: r.data.lender,
-        balance: Number(r.data.balance),
-        interestRate: Number(r.data.interestRate),
-        minPayment: Number(r.data.minPayment),
-        dueDate: r.data.dueDate || '15 ของทุกเดือน',
+        name: (r.data.name || '').trim() || `ใบแจ้งหนี้ ${r.fileName}`,
+        lender: (r.data.lender || '').trim() || 'ไม่ระบุ',
+        balance: Number(r.data.balance) || 0,
+        interestRate: Number(r.data.interestRate) || 0,
+        minPayment: Number(r.data.minPayment) || 0,
+        dueDate: (r.data.dueDate || '').trim() || '15 ของทุกเดือน',
         isScanned: true
-      }));
+      }))
+      .filter(item => item.balance > 0);
 
     if (itemsToImport.length > 0) {
       onImportDebts(itemsToImport);
       onNavigateToCalculator();
+    } else {
+      setScanError('ยังไม่มีรายการที่กรอกยอดหนี้คงเหลือ (บาท) — กรุณากรอกยอดหนี้อย่างน้อย 1 รายการก่อนนำเข้า');
     }
   };
 
   return (
     <div className="space-y-6 animate-fade-in">
-      
+
       {/* Header Banner */}
       <div className="bg-white p-6 rounded-2xl relative overflow-hidden border border-slate-200 shadow-sm">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -161,11 +223,11 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
               สแกนและนำเข้าใบแจ้งหนี้อัตโนมัติ (Multi-Image Import)
             </h2>
             <p className="text-xs text-slate-500 font-medium mt-1 max-w-2xl">
-              สามารถเลือกหรือลากไฟล์รูปภาพใบแจ้งหนี้ <strong className="text-indigo-600">หลายรูปพร้อมกัน</strong> หรือใช้กล้องถ่ายรูป ระบบ AI OCR จะดึงข้อมูล ยอดหนี้ อัตราดอกเบี้ย ยอดขั้นต่ำ และวันครบกำหนดให้อัตโนมัติ
+              สามารถเลือกหรือลากไฟล์รูปภาพใบแจ้งหนี้ <strong className="text-indigo-600">หลายรูปพร้อมกัน</strong> หรือใช้กล้องถ่ายรูป ระบบ AI OCR จะอ่านข้อความจากรูปจริง เพื่อดึงข้อมูล ยอดหนี้ อัตราดอกเบี้ย ยอดขั้นต่ำ และวันครบกำหนดให้อัตโนมัติ
             </p>
           </div>
 
-          <button 
+          <button
             onClick={loadMockSamples}
             className="btn-secondary text-xs whitespace-nowrap border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-bold"
           >
@@ -177,7 +239,7 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
 
       {/* Multi-Image File Dropzone & Camera Trigger */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
+
         {/* Left Col: Upload Zone */}
         <div className="lg:col-span-2 bg-white p-6 rounded-2xl space-y-4 border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between">
@@ -192,12 +254,12 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
 
           {/* Drag and Drop Zone */}
           <div className="border-2 border-dashed border-slate-300 hover:border-indigo-500 hover:bg-indigo-50/50 rounded-2xl p-8 text-center bg-slate-50/70 transition-all group relative">
-            <input 
-              type="file" 
-              accept="image/*" 
-              multiple 
+            <input
+              type="file"
+              accept="image/*"
+              multiple
               onChange={handleFileChange}
-              className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10" 
+              className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
               id="multiFileInput"
             />
             <div className="space-y-3 pointer-events-none">
@@ -226,7 +288,7 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
             </button>
 
             {selectedFiles.length > 0 && (
-              <button 
+              <button
                 onClick={() => setSelectedFiles([])}
                 className="text-xs text-slate-500 hover:text-rose-600 flex items-center gap-1 font-semibold"
               >
@@ -270,9 +332,9 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {selectedFiles.map((file) => (
                   <div key={file.id} className="relative group bg-slate-50 p-2 rounded-xl border border-slate-200 flex items-center gap-3">
-                    <img 
-                      src={file.previewUrl} 
-                      alt={file.name} 
+                    <img
+                      src={file.previewUrl}
+                      alt={file.name}
                       className="w-12 h-12 rounded-lg object-cover bg-slate-200 border border-slate-300 flex-shrink-0"
                     />
                     <div className="min-w-0 flex-1">
@@ -299,7 +361,7 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
                 {isScanning ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
-                    กำลังประมวลผล OCR ({scanProgress}%)...
+                    กำลังอ่านข้อความจากรูปภาพด้วย AI ({scanProgress}%)...
                   </>
                 ) : (
                   <>
@@ -308,6 +370,10 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
                   </>
                 )}
               </button>
+
+              <p className="text-[10px] text-slate-400 font-medium text-center">
+                ครั้งแรกจะดาวน์โหลดโมเดล AI อ่านภาพ (~15 MB) และประมวลผลในเครื่องเบราว์เซอร์
+              </p>
             </div>
           )}
 
@@ -323,7 +389,7 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
           <div className="space-y-3 text-xs text-slate-700">
             <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
               <span className="font-bold text-indigo-700 block">📷 รูปถ่ายที่ชัดเจน</span>
-              <p className="text-slate-600 font-medium">ควรถ่ายรูปใบแจ้งหนี้ให้เห็นหัวกระดาษ ยอดหนี้รวม และอัตราดอกเบี้ยอย่างชัดเจน</p>
+              <p className="text-slate-600 font-medium">ควรถ่ายรูปใบแจ้งหนี้ให้เห็นหัวกระดาษ ยอดหนี้รวม และอัตราดอกเบี้ยอย่างชัดเจน ยิ่งตัวหนังสือคมชัด ยิ่งอ่านได้แม่นยำ</p>
             </div>
 
             <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
@@ -332,8 +398,13 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
             </div>
 
             <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
+              <span className="font-bold text-indigo-700 block">✏️ ตรวจสอบก่อนนำเข้า</span>
+              <p className="text-slate-600 font-medium">ตัวเลขที่ AI อ่านได้อาจคลาดเคลื่อนจากภาพที่ไม่ชัด — ตรวจสอบและแก้ไขได้ก่อนกดนำเข้าตารางคำนวณ</p>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
               <span className="font-bold text-indigo-700 block">🔒 ความปลอดภัยข้อมูล</span>
-              <p className="text-slate-600 font-medium">ข้อมูลใบแจ้งหนี้ของคุณจะถูกประมวลผลด้วย AI ภายในเครื่องอย่างปลอดภัย</p>
+              <p className="text-slate-600 font-medium">รูปภาพใบแจ้งหนี้ของคุณถูกประมวลผลภายในเบราว์เซอร์ ไม่ถูกอัปโหลดไปยังเซิร์ฟเวอร์</p>
             </div>
           </div>
         </div>
@@ -347,9 +418,11 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
             <div>
               <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
                 <CheckCircle className="w-5 h-5 text-emerald-600" />
-                ผลการสกัดข้อมูลจาก OCR ({scanResults.length} รายการ)
+                ผลการอ่านข้อมูลจากรูปภาพ ({scanResults.length} รายการ)
               </h3>
-              <p className="text-xs text-slate-500 font-medium">ตรวจสอบและเลือกรายการที่ต้องการนำเข้าตารางคำนวณหลัก</p>
+              <p className="text-xs text-slate-500 font-medium">
+                AI อ่านข้อความจากรูปภาพจริงและกรอกค่าให้อัตโนมัติ — กรุณาตรวจสอบและแก้ไขให้ถูกต้องก่อนนำเข้า
+              </p>
             </div>
 
             <button
@@ -362,57 +435,144 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {scanError && (
+            <div className="flex items-start gap-2 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl px-3 py-2.5 text-xs font-semibold">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-px" />
+              {scanError}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {scanResults.map((item) => {
               const isSelected = selectedResultIds.includes(item.id);
+              const hasText = Boolean(item.text);
               return (
-                <div 
+                <div
                   key={item.id}
                   onClick={() => toggleSelectResult(item.id)}
                   className={`p-4 rounded-xl border cursor-pointer transition-all space-y-3 ${
-                    isSelected 
-                      ? 'bg-indigo-50/70 border-indigo-500 shadow-md' 
+                    isSelected
+                      ? 'bg-indigo-50/70 border-indigo-500 shadow-md'
                       : 'bg-slate-50/50 border-slate-200 opacity-80 hover:opacity-100'
                   }`}
                 >
                   {/* Card Top */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      {isSelected ? (
-                        <CheckSquare className="w-5 h-5 text-indigo-600" />
-                      ) : (
-                        <Square className="w-5 h-5 text-slate-400" />
-                      )}
-                      <span className="text-xs font-extrabold text-slate-900 truncate max-w-[150px]">{item.data.name}</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); toggleSelectResult(item.id); }}
+                        className="flex-shrink-0"
+                      >
+                        {isSelected ? (
+                          <CheckSquare className="w-5 h-5 text-indigo-600" />
+                        ) : (
+                          <Square className="w-5 h-5 text-slate-400" />
+                        )}
+                      </button>
+                      <span className="text-xs font-extrabold text-slate-900 truncate">
+                        {item.data.name || 'รายการจากใบแจ้งหนี้'}
+                      </span>
                     </div>
 
-                    <span className="badge-gold text-[10px]">
-                      {(item.data.confidence * 100).toFixed(0)}% Accuracy
-                    </span>
+                    {item.isMock ? (
+                      <span className="badge-gold text-[10px]">ข้อมูลตัวอย่าง</span>
+                    ) : item.confidence > 0 ? (
+                      <span className="badge-gold text-[10px]">{item.confidence}% Accuracy</span>
+                    ) : (
+                      <span className="text-[10px] font-bold text-slate-400 bg-slate-200/60 rounded-full px-2 py-0.5">
+                        ไม่พบข้อความ
+                      </span>
+                    )}
                   </div>
 
-                  {/* Card Details */}
-                  <div className="space-y-1.5 text-xs pt-2 border-t border-slate-200/60 font-medium">
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">สถาบันการเงิน:</span>
-                      <span className="font-semibold text-slate-800">{item.data.lender}</span>
+                  {/* Editable extracted fields */}
+                  <div onClick={(e) => e.stopPropagation()} className="space-y-2 pt-2 border-t border-slate-200/60">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="col-span-2">
+                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">ชื่อรายการหนี้</label>
+                        <input
+                          type="text"
+                          value={item.data.name}
+                          onChange={(e) => updateResultField(item.id, 'name', e.target.value)}
+                          placeholder="เช่น บัตรเครดิต KTC"
+                          className="w-full text-xs px-2 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400/40 focus:border-indigo-400"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">สถาบันการเงิน</label>
+                        <input
+                          type="text"
+                          value={item.data.lender}
+                          onChange={(e) => updateResultField(item.id, 'lender', e.target.value)}
+                          placeholder="เช่น ธนาคารกสิกรไทย"
+                          className="w-full text-xs px-2 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400/40 focus:border-indigo-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">ยอดหนี้คงเหลือ (บาท)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={item.data.balance}
+                          onChange={(e) => updateResultField(item.id, 'balance', e.target.value)}
+                          placeholder="0"
+                          className="w-full text-xs px-2 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400/40 focus:border-indigo-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">อัตราดอกเบี้ย (%/ปี)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={item.data.interestRate}
+                          onChange={(e) => updateResultField(item.id, 'interestRate', e.target.value)}
+                          placeholder="0"
+                          className="w-full text-xs px-2 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400/40 focus:border-indigo-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">ชำระขั้นต่ำ (บาท)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={item.data.minPayment}
+                          onChange={(e) => updateResultField(item.id, 'minPayment', e.target.value)}
+                          placeholder="0"
+                          className="w-full text-xs px-2 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400/40 focus:border-indigo-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">วันครบกำหนด</label>
+                        <input
+                          type="text"
+                          value={item.data.dueDate}
+                          onChange={(e) => updateResultField(item.id, 'dueDate', e.target.value)}
+                          placeholder="เช่น 15 ของทุกเดือน"
+                          className="w-full text-xs px-2 py-1.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400/40 focus:border-indigo-400"
+                        />
+                      </div>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">ยอดหนี้คงเหลือ:</span>
-                      <span className="font-extrabold text-indigo-600">{formatCurrency(item.data.balance)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">อัตราดอกเบี้ย:</span>
-                      <span className="font-bold text-rose-600">{item.data.interestRate}% ต่อปี</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">ชำระขั้นต่ำ:</span>
-                      <span className="font-semibold text-slate-800">{formatCurrency(item.data.minPayment)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">วันครบกำหนด:</span>
-                      <span className="text-slate-800">{item.data.dueDate}</span>
-                    </div>
+
+                    {!item.isMock && !hasText && (
+                      <div className="flex items-start gap-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg px-2 py-1.5 text-[10px] font-semibold">
+                        <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-px" />
+                        ไม่พบข้อความในรูปหรือรูปไม่ชัดเจน — กรุณาตรวจสอบ / กรอกข้อมูลด้วยตนเอง
+                      </div>
+                    )}
+
+                    {hasText && (
+                      <details className="group">
+                        <summary className="text-[10px] font-bold text-slate-500 cursor-pointer flex items-center gap-1 hover:text-indigo-600 select-none">
+                          <FileText className="w-3 h-3" />
+                          ดูข้อความที่ AI อ่านได้จากรูป
+                        </summary>
+                        <pre className="mt-1 p-2 bg-slate-900 text-emerald-300 text-[10px] leading-relaxed rounded-lg max-h-32 overflow-auto whitespace-pre-wrap break-words font-mono">
+                          {item.text}
+                        </pre>
+                      </details>
+                    )}
                   </div>
 
                 </div>

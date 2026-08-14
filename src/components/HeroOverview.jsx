@@ -7,15 +7,15 @@ import {
   Sparkles,
   CreditCard
 } from 'lucide-react';
-import { formatCurrency } from '../utils/debtEngine';
+import { calculateDebtProgress, formatCurrency } from '../utils/debtEngine';
 
-export default function HeroOverview({ debts, result, onSelectTab }) {
-  const totalBalance = debts.reduce((sum, debt) => sum + Number(debt.balance), 0);
-  const originalBalanceTotal = debts.reduce((sum, debt) => sum + Number(debt.originalBalance || (debt.balance * 1.3)), 0);
-  const totalPaid = Math.max(0, originalBalanceTotal - totalBalance);
-  const progressPercent = originalBalanceTotal > 0
-    ? Math.min(100, Math.round((totalPaid / originalBalanceTotal) * 100))
-    : 0;
+export default function HeroOverview({ debts, paymentLogs = [], result, onSelectTab }) {
+  // Progress computed from REAL user data (payment logs), consistent across all pages
+  const progress = calculateDebtProgress(debts, paymentLogs);
+  const totalBalance = progress.totalRemaining;
+  const originalBalanceTotal = progress.totalOriginal;
+  const totalPaid = progress.totalPaid;
+  const progressPercent = progress.progressPercent;
   const remainingPercent = Math.max(0, 100 - progressPercent);
 
   return (

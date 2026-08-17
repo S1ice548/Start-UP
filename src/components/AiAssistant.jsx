@@ -136,7 +136,7 @@ export default function AiAssistant({ debts, extraBudget, setExtraBudget, setDeb
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="ai-page space-y-6 animate-fade-in">
       
       {/* Top Banner */}
       <div className="bg-white p-6 rounded-2xl relative overflow-hidden border border-slate-200 shadow-sm">

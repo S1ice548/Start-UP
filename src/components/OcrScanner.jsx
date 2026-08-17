@@ -206,7 +206,7 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="ocr-page space-y-6 animate-fade-in">
 
       {/* Header Banner */}
       <div className="bg-white p-6 rounded-2xl relative overflow-hidden border border-slate-200 shadow-sm">

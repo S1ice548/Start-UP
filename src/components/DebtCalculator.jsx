@@ -233,8 +233,8 @@ export default function DebtCalculator({
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="relative">
+          <div className="budget-mobile-actions flex items-center gap-3">
+            <div className="budget-input-wrap relative">
               <input
                 type="text"
                 inputMode="numeric"
@@ -242,9 +242,9 @@ export default function DebtCalculator({
                 placeholder="เช่น 5000"
                 value={budgetString}
                 onChange={handleBudgetInputChange}
-                className="input-dark w-44 text-right font-black text-indigo-600 pr-8 text-lg"
+                className="input-dark budget-currency-input w-44 text-right font-black text-indigo-600 text-lg"
               />
-              <span className="absolute right-3 top-2.5 text-xs text-slate-400 font-bold">฿</span>
+              <span className="budget-currency-symbol absolute text-xs text-slate-400 font-bold" aria-hidden="true">฿</span>
             </div>
 
             <button

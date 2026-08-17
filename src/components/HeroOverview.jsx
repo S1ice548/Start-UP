@@ -1,11 +1,10 @@
 import React from 'react';
 import {
-  Trophy,
   Clock,
   TrendingDown,
   ArrowUpRight,
   Sparkles,
-  CreditCard
+  CreditCard,
 } from 'lucide-react';
 import { calculateDebtProgress, formatCurrency } from '../utils/debtEngine';
 
@@ -20,7 +19,7 @@ export default function HeroOverview({ debts, paymentLogs = [], result, onSelect
 
   return (
     <div className="space-y-5 animate-fade-in mb-6">
-      <div className="bg-white p-6 rounded-2xl relative overflow-hidden shadow-md border border-indigo-100">
+      <div className="neenoi-hero bg-white p-6 rounded-2xl relative overflow-hidden shadow-md border border-indigo-100">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
           <div className="space-y-4 flex-1">
             <span className="badge-gold">
@@ -72,18 +71,16 @@ export default function HeroOverview({ debts, paymentLogs = [], result, onSelect
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:flex sm:flex-col gap-2.5 justify-center w-full lg:w-auto lg:min-w-[200px]">
+          <div className="grid grid-cols-1 sm:flex sm:flex-col gap-2.5 justify-center w-full lg:w-auto lg:min-w-[220px]">
             <button onClick={() => onSelectTab('payment_history')} className="btn-gold text-xs justify-center py-3 px-5 shadow-md shadow-indigo-500/20 font-extrabold cursor-pointer">
               <CreditCard className="w-4 h-4" />บันทึกชำระหนี้
             </button>
             <button onClick={() => onSelectTab('calculator')} className="btn-secondary text-xs justify-center py-2 px-4 cursor-pointer">
               ดูแผนการจ่ายเดือนนี้ <ArrowUpRight className="w-3.5 h-3.5" />
             </button>
-            <button onClick={() => onSelectTab('milestones')} className="btn-secondary text-xs justify-center py-2 px-4 cursor-pointer text-indigo-700">
-              <Trophy className="w-3.5 h-3.5 text-indigo-600" />ดูหน้าเหรียญรางวัล
-            </button>
           </div>
         </div>
+
         <div className="absolute top-0 right-0 -mt-8 -mr-8 w-64 h-64 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none" />
       </div>
     </div>

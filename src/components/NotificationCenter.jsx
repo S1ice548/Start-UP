@@ -81,7 +81,7 @@ export default function NotificationCenter({ debts, showToast }) {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="notifications-page space-y-6 animate-fade-in">
       
       {/* 1. Header Banner */}
       <div className="bg-white p-6 rounded-2xl relative overflow-hidden shadow-sm border border-slate-200">

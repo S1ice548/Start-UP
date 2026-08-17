@@ -30,11 +30,11 @@ export default function PaymentHistoryPage({
   userName = 'User',
   manualStrategy = null
 }) {
-  // Calculate Payoff Result to identify the #1 Focus Debt recommended by AI/Strategy
-  // Uses the user's chosen pay method (manualStrategy) so the Focus Target matches it
+  // Calculate Payoff Result to identify the focus debt recommended by AI/Strategy
+  // Uses the user's chosen pay method (manualStrategy) so the focus target matches it
   const result = calculateDebtPayoff(debts, extraBudget, manualStrategy);
   
-  // Find top debt to focus on (first active debt in payoff order for the active strategy)
+  // Find the debt to focus on (first active debt in payoff order for the active strategy)
   const focusDebtId = getFocusDebtId(result, debts);
 
   const focusDebtObj = debts.find(d => d.id === focusDebtId);
@@ -103,7 +103,7 @@ export default function PaymentHistoryPage({
   };
 
   return (
-    <div className="space-y-6 animate-fade-in pb-16">
+    <div className="payment-page space-y-6 animate-fade-in pb-16">
       
       {/* 1. Visual Breadcrumb Trail */}
       <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
@@ -196,7 +196,7 @@ export default function PaymentHistoryPage({
               </div>
               <div>
                 <span className="bg-indigo-600 text-white font-black text-[10px] px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-                  🔥 FOCUS TARGET (รายการที่ควรโปะอันดับ 1 ตามแผน AI)
+                  🎯 หนี้ที่ AI แนะนำให้โปะก่อน
                 </span>
                 <h2 className="text-lg font-extrabold text-slate-900 flex items-center gap-2 pt-0.5">
                   {focusDebtObj.name}
@@ -218,7 +218,7 @@ export default function PaymentHistoryPage({
           </div>
 
           <p className="text-xs text-slate-600 pt-2 leading-relaxed border-t border-indigo-100 font-medium">
-            💡 <strong>ทำไม AI ถึงเลือกก้อนนี้?</strong> เป้าหมาย {STRATEGIES_INFO[result.activeStrategyKey]?.outcomeLabel || result.activeStrategyName} แนะนำให้ทุ่มเงินโปะรายการนี้ก่อนเป็นอันดับแรก เพื่อลดดอกเบี้ยสะสมหรือปิดหนี้ให้เร็วที่สุด
+            💡 <strong>ทำไม AI ถึงเลือกก้อนนี้?</strong> เป้าหมาย {STRATEGIES_INFO[result.activeStrategyKey]?.outcomeLabel || result.activeStrategyName} แนะนำให้ทุ่มเงินโปะรายการนี้ก่อนรายการอื่น ๆ เพื่อลดดอกเบี้ยสะสมหรือปิดหนี้ให้เร็วที่สุด
           </p>
 
           <div className="absolute top-0 right-0 -mt-6 -mr-6 w-32 h-32 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none" />
@@ -237,7 +237,7 @@ export default function PaymentHistoryPage({
             <label className="text-xs font-bold text-slate-700 block mb-1 flex items-center justify-between">
               <span>เลือกรายการหนี้ *</span>
               {selectedDebtId === focusDebtId && (
-                <span className="text-[10px] text-indigo-600 font-bold">🎯 AI Focus Target</span>
+                <span className="text-[10px] text-indigo-600 font-bold">🎯 หนี้ที่ AI แนะนำ</span>
               )}
             </label>
             <select
@@ -249,7 +249,7 @@ export default function PaymentHistoryPage({
             >
               {debts.map(d => (
                 <option key={d.id} value={d.id}>
-                  {d.id === focusDebtId ? `🔥 [FOCUS #1] ${d.name}` : d.name} (คงเหลือ: {formatCurrency(d.balance)})
+                  {d.id === focusDebtId ? `🎯 ${d.name}` : d.name} (คงเหลือ: {formatCurrency(d.balance)})
                 </option>
               ))}
             </select>
@@ -326,7 +326,7 @@ export default function PaymentHistoryPage({
               };
             } else if (isFocusTarget) {
               statusBadge = {
-                text: '🔥 FOCUS TARGET #1',
+                text: '🎯 หนี้เป้าหมาย (โปะก่อน)',
                 bgColor: 'bg-indigo-600 text-white font-extrabold border-indigo-500 animate-pulse',
                 barColor: 'from-indigo-600 via-indigo-500 to-emerald-400'
               };

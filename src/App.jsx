@@ -4,6 +4,7 @@ import LoginPage from './components/LoginPage';
 import RestrictedAccessPage from './components/RestrictedAccessPage';
 import Header from './components/Header';
 import HeroOverview from './components/HeroOverview';
+import MobileHome from './components/MobileHome';
 import DebtCalculator from './components/DebtCalculator';
 import OcrScanner from './components/OcrScanner';
 import AiAssistant from './components/AiAssistant';
@@ -16,21 +17,15 @@ import AddEditDebtPage from './components/AddEditDebtPage';
 import MilestonesPage from './components/MilestonesPage';
 import PaymentHistoryPage from './components/PaymentHistoryPage';
 import CashflowPage from './components/CashflowPage';
+import RefinanceDashboard from './components/RefinanceDashboard';
 
 import { INITIAL_DEBTS, getViewDataForUser, saveUserDataToStorage, resetUserDataStorage } from './data/mockData';
 import { calculateDebtPayoff } from './utils/debtEngine';
-import { 
-  Calculator, 
-  Scan, 
-  Bot, 
-  Bell, 
-  ShieldCheck, 
+import {
   CheckCircle2,
   Wifi,
   Battery,
-  Signal,
-  CreditCard,
-  RotateCcw
+  Signal
 } from 'lucide-react';
 
 export default function App() {
@@ -70,9 +65,17 @@ function AppContent({ isAdmin, user, onLogout }) {
   const [activeTab, setActiveTab] = useState('calculator');
   const [editingDebt, setEditingDebt] = useState(null);
   const [manualStrategy, setManualStrategy] = useState(viewData.strategy || null);
-  const [isAdminMode, setIsAdminMode] = useState(false);
   const [isMobileView, setIsMobileView] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    const saved = localStorage.getItem('nee_noi_sidebar_open');
+    return saved === null ? true : saved === 'true';
+  });
   const [toastMessage, setToastMessage] = useState(null);
+
+  // Persist sidebar collapsed state
+  React.useEffect(() => {
+    localStorage.setItem('nee_noi_sidebar_open', String(sidebarOpen));
+  }, [sidebarOpen]);
 
   // Sync state when selected user or logged in user changes
   React.useEffect(() => {
@@ -195,7 +198,7 @@ function AppContent({ isAdmin, user, onLogout }) {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-indigo-500 selection:text-white">
+    <div className={`min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-indigo-500 selection:text-white ${isMobileView ? 'mobile-mode' : ''} ${!sidebarOpen ? 'sidebar-closed' : ''}`}>
       
       {/* Toast Notification Banner */}
       {toastMessage && (
@@ -207,10 +210,10 @@ function AppContent({ isAdmin, user, onLogout }) {
         </div>
       )}
 
-      {/* Main Wrapper Container */}
+      {/* Main Wrapper Container (phone frame when mobile view is on) */}
       <div className={isMobileView ? "mobile-app-wrapper py-2 px-1 my-4 border border-slate-300 shadow-2xl" : "min-h-screen pb-20 lg:pb-8"}>
         
-        {/* Mobile Top Status Bar */}
+        {/* Mobile Top Status Bar (phone frame only) */}
         {isMobileView && (
           <div className="flex items-center justify-between px-6 py-2 text-[11px] text-slate-500 font-mono border-b border-slate-200 bg-white">
             <span>22:49</span>
@@ -222,27 +225,38 @@ function AppContent({ isAdmin, user, onLogout }) {
           </div>
         )}
 
-        {/* Header Navigation */}
+        {/* Sidebar + Topbar Navigation */}
         <Header
           activeTab={activeTab}
           setActiveTab={setActiveTab}
-          isAdminMode={isAdminMode}
-          setIsAdminMode={setIsAdminMode}
           debtCount={debts.length}
-          isMobileView={isMobileView}
-          setIsMobileView={setIsMobileView}
           user={user}
           isAdmin={isAdmin}
           onLogout={onLogout}
           selectedUserId={selectedUserId}
           setSelectedUserId={setSelectedUserId}
+          isMobileView={isMobileView}
+          setIsMobileView={setIsMobileView}
+          sidebarOpen={sidebarOpen}
+          setSidebarOpen={setSidebarOpen}
         />
 
         {/* Main Page Viewports */}
         <main className={`w-full mx-auto space-y-5 sm:space-y-6 ${isMobileView ? 'px-3 pb-24' : 'max-w-[1800px] px-3 sm:px-5 lg:px-8 2xl:px-10'}`}>
           
-          {/* Top Hero Freedom Overview Bar (Shown on main user tabs) */}
-          {(activeTab === 'calculator' || activeTab === 'ocr' || activeTab === 'ai' || activeTab === 'notifications') && (
+          {/* Mobile native home (phone view of the calculator tab) */}
+          {activeTab === 'calculator' && isMobileView && (
+            <MobileHome
+              debts={debts}
+              paymentLogs={paymentLogs}
+              result={result}
+              extraBudget={extraBudget}
+              onSelectTab={setActiveTab}
+            />
+          )}
+
+          {/* Top Hero Freedom Overview Bar (calculator tab, desktop) */}
+          {activeTab === 'calculator' && !isMobileView && (
             <HeroOverview
               debts={debts}
               paymentLogs={paymentLogs}
@@ -252,7 +266,7 @@ function AppContent({ isAdmin, user, onLogout }) {
           )}
 
           {/* Page 1: Debt Calculator */}
-          {activeTab === 'calculator' && (
+          {activeTab === 'calculator' && !isMobileView && (
             <DebtCalculator
               debts={debts}
               setDebts={setDebts}
@@ -369,107 +383,29 @@ function AppContent({ isAdmin, user, onLogout }) {
             />
           )}
 
+          {/* Dedicated Page 10: Refinance Calculator & Walk-in Document Packager */}
+          {activeTab === 'refinance' && (
+            <RefinanceDashboard
+              userName={user?.name || 'User'}
+              onBack={() => setActiveTab('calculator')}
+            />
+          )}
+
         </main>
 
         {/* Desktop Footer */}
         {!isMobileView && (
-          <footer className="max-w-[1800px] mx-auto px-3 sm:px-5 lg:px-8 2xl:px-10 mt-12 lg:mt-16 pt-6 pb-20 lg:pb-8 border-t border-slate-200 text-center text-xs text-slate-500">
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-              <p>© 2026 หนี้น้อย (Nee Noi) - AI Debt Payoff Mobile Planner</p>
-              <div className="flex items-center gap-3 text-slate-500">
-                <span>Avalanche / Snowball / Tsunami / Snowflake / Landslide</span>
-                <span>•</span>
-                <span className="text-indigo-600 font-semibold">Payment Tracker Engine</span>
-              </div>
+        <footer className="max-w-[1800px] mx-auto px-3 sm:px-5 lg:px-8 2xl:px-10 mt-12 lg:mt-16 pt-6 pb-20 lg:pb-8 border-t border-slate-200 text-center text-xs text-slate-500">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+            <p>© 2026 หนี้น้อย (Nee Noi) - AI Debt Payoff Mobile Planner</p>
+            <div className="flex items-center gap-3 text-slate-500">
+              <span>Avalanche / Snowball / Tsunami / Snowflake / Landslide</span>
+              <span>•</span>
+              <span className="text-indigo-600 font-semibold">Payment Tracker Engine</span>
             </div>
-          </footer>
+          </div>
+        </footer>
         )}
-
-        {/* Mobile Bottom Navigation Bar */}
-        <div className={`fixed bottom-0 z-50 p-2 flex justify-center pointer-events-none lg:hidden ${isMobileView ? 'left-1/2 w-full max-w-[480px] -translate-x-1/2' : 'left-0 right-0'}`}>
-          <nav className="pointer-events-auto bg-white/95 backdrop-blur-xl border border-slate-200 px-1.5 sm:px-3 py-2 rounded-2xl shadow-xl shadow-slate-900/10 flex items-center justify-around gap-0.5 sm:gap-1 max-w-md w-full">
-            
-            <button
-              onClick={() => setActiveTab('calculator')}
-              className={`flex flex-col items-center gap-1 px-1.5 sm:px-2 py-1.5 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'calculator' || activeTab === 'compare_strategies' || activeTab === 'add_debt' || activeTab === 'milestones'
-                  ? 'text-indigo-600 font-bold bg-indigo-50' 
-                  : 'text-slate-500 hover:text-slate-900'
-              }`}
-            >
-              <Calculator className="w-5 h-5" />
-              <span className="text-[10px]">แผน AI</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('payment_history')}
-              className={`flex flex-col items-center gap-1 px-1.5 sm:px-2 py-1.5 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'payment_history' 
-                  ? 'text-indigo-600 font-bold bg-indigo-50' 
-                  : 'text-slate-500 hover:text-slate-900'
-              }`}
-            >
-              <CreditCard className="w-5 h-5" />
-              <span className="text-[10px]">ชำระหนี้</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('ocr')}
-              className={`flex flex-col items-center gap-1 px-1.5 sm:px-2 py-1.5 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'ocr' 
-                  ? 'text-indigo-600 font-bold bg-indigo-50' 
-                  : 'text-slate-500 hover:text-slate-900'
-              }`}
-            >
-              <Scan className="w-5 h-5" />
-              <span className="text-[10px]">สแกน</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('ai')}
-              className={`flex flex-col items-center gap-1 px-1.5 sm:px-2 py-1.5 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'ai' 
-                  ? 'text-indigo-600 font-bold bg-indigo-50' 
-                  : 'text-slate-500 hover:text-slate-900'
-              }`}
-            >
-              <Bot className="w-5 h-5" />
-              <span className="text-[10px]">AI ผู้ช่วย</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('notifications')}
-              className={`flex flex-col items-center gap-1 px-1.5 sm:px-2 py-1.5 rounded-xl transition-all cursor-pointer relative ${
-                activeTab === 'notifications' 
-                  ? 'text-indigo-600 font-bold bg-indigo-50' 
-                  : 'text-slate-500 hover:text-slate-900'
-              }`}
-            >
-              <div className="relative">
-                <Bell className="w-5 h-5" />
-                <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-rose-500 animate-ping" />
-                <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-rose-500" />
-              </div>
-              <span className="text-[10px]">แจ้งเตือน</span>
-            </button>
-
-            {isAdmin && (
-              <button
-                onClick={() => setActiveTab('admin')}
-                className={`flex flex-col items-center gap-1 px-1.5 sm:px-2 py-1.5 rounded-xl transition-all cursor-pointer ${
-                  activeTab === 'admin'
-                    ? 'text-indigo-600 font-bold bg-indigo-50'
-                    : 'text-slate-500 hover:text-slate-900'
-                }`}
-                aria-label="ไปยังหน้าหลังบ้านผู้ดูแลระบบ"
-              >
-                <ShieldCheck className="w-5 h-5" />
-                <span className="text-[10px]">Admin</span>
-              </button>
-            )}
-
-          </nav>
-        </div>
 
       </div>
 

@@ -57,7 +57,7 @@ export default function MilestonesPage({ debts, paymentLogs = [], result, extraB
   ];
 
   return (
-    <div className="space-y-6 animate-fade-in pb-12">
+    <div className="milestones-page space-y-6 animate-fade-in pb-12">
       
       {/* 1. Visual Breadcrumb Trail */}
       <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">

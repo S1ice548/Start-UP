@@ -10,3 +10,6 @@ vite-dev-error.log
 .claude/
 .codex/
 .continue/
+
+# Reference copy of the Next.js app (used only as a design reference)
+nee-noi-debt-planner/

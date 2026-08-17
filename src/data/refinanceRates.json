@@ -1,0 +1,108 @@
+{
+  "disclaimer": "ข้อมูลอัตราดอกเบี้ย ค่าธรรมเนียม และเงื่อนไขในไฟล์นี้เป็นข้อมูลสาธารณะเชิงอ้างอิง (illustrative) เพื่อใช้คำนวณเปรียบเทียบภายในแอปเท่านั้น ไม่ใช่ข้อเสนออย่างเป็นทางการจากธนาคาร ควรยืนยันอัตราและโปรโมชัน ณ สาขาก่อนยื่นกู้จริง",
+  "updatedAt": "2026-08-17",
+  "currency": "THB",
+  "termYears": 3,
+  "defaultFees": {
+    "mortgageRegistrationPct": 0.01,
+    "appraisalFee": 3000,
+    "dutyStampPct": 0.0005
+  },
+  "packages": [
+    {
+      "id": "kbank-refinance",
+      "bank": "ธนาคารกสิกรไทย",
+      "bankShort": "KBank",
+      "packageTitle": "K-Home Loan รีไฟแนนซ์ ปลดภาระหนี้บ้าน",
+      "rate3YAvg": 2.99,
+      "minIncome": 30000,
+      "allowedOccupations": ["salaried", "government", "business"],
+      "fees": {
+        "mortgageRegistrationPct": 0.01,
+        "appraisalFee": 3000,
+        "dutyStampPct": 0.0005
+      },
+      "waiverPromos": [
+        { "id": "kbank-free-appraisal", "label": "ฟรีค่าประเมินหลักทรัพย์", "waives": ["appraisal"], "requiresMRTA": false },
+        { "id": "kbank-free-regis-mrta", "label": "ฟรีค่าจดจำนอง 1% เมื่อทำประกัน MRTA", "waives": ["mortgageRegistration"], "requiresMRTA": true }
+      ],
+      "notes": "วงเงินกู้สูงสุด 100% ของราคาประเมิน ฟรีค่าประเมินทุกกรณี"
+    },
+    {
+      "id": "scb-refinance",
+      "bank": "ธนาคารไทยพาณิชย์",
+      "bankShort": "SCB",
+      "packageTitle": "SCB บ้าน ปลดภาระ รีไฟแนนซ์ ลดดอกเบี้ย",
+      "rate3YAvg": 2.75,
+      "minIncome": 25000,
+      "allowedOccupations": ["salaried", "government", "freelance"],
+      "fees": {
+        "mortgageRegistrationPct": 0.01,
+        "appraisalFee": 3000,
+        "dutyStampPct": 0.0005
+      },
+      "waiverPromos": [
+        { "id": "scb-free-appraisal", "label": "ฟรีค่าประเมินหลักทรัพย์", "waives": ["appraisal"], "requiresMRTA": false },
+        { "id": "scb-free-regis-mrta", "label": "ฟรีค่าจดจำนอง 1% เมื่อทำประกัน MRTA", "waives": ["mortgageRegistration"], "requiresMRTA": true }
+      ],
+      "notes": "อัตราดอกเบี้ยต่ำสุดในตลาดช่วงโปรโมชัน พร้อมฟรีค่าประเมิน"
+    },
+    {
+      "id": "ttb-refinance",
+      "bank": "ธนาคารทหารไทยธนชาต",
+      "bankShort": "ttb",
+      "packageTitle": "ttb บ้าน รีไฟแนนซ์ ลดภาระทุกเดือน",
+      "rate3YAvg": 3.10,
+      "minIncome": 22000,
+      "allowedOccupations": ["salaried", "government", "freelance", "business", "pensioner"],
+      "fees": {
+        "mortgageRegistrationPct": 0.01,
+        "appraisalFee": 3000,
+        "dutyStampPct": 0.0005
+      },
+      "waiverPromos": [
+        { "id": "ttb-free-appraisal", "label": "ฟรีค่าประเมินหลักทรัพย์", "waives": ["appraisal"], "requiresMRTA": false },
+        { "id": "ttb-free-regis-mrta", "label": "ฟรีค่าจดจำนอง 1% เมื่อทำประกัน MRTA", "waives": ["mortgageRegistration"], "requiresMRTA": true }
+      ],
+      "notes": "รับทุกอาชีพ ยื่นได้ทั้งเงินเดือน ฟรีแลนซ์ และเจ้าของกิจการ"
+    },
+    {
+      "id": "ghbank-refinance",
+      "bank": "ธนาคารอาคารสงเคราะห์",
+      "bankShort": "GH Bank",
+      "packageTitle": "สินเชื่อบ้านรีไฟแนนซ์ ธอส. เพื่อประชาชน",
+      "rate3YAvg": 3.15,
+      "minIncome": 15000,
+      "allowedOccupations": ["salaried", "government", "freelance", "business", "pensioner"],
+      "fees": {
+        "mortgageRegistrationPct": 0.01,
+        "appraisalFee": 3000,
+        "dutyStampPct": 0.0005
+      },
+      "waiverPromos": [
+        { "id": "ghbank-free-appraisal", "label": "ฟรีค่าประเมินหลักทรัพย์", "waives": ["appraisal"], "requiresMRTA": false },
+        { "id": "ghbank-free-regis-mrta", "label": "ฟรีค่าจดจำนอง 1% เมื่อทำประกัน MRTA", "waives": ["mortgageRegistration"], "requiresMRTA": true }
+      ],
+      "notes": "เงื่อนไขรายได้ผ่อนปรนที่สุด เหมาะกับผู้มีรายได้ไม่สูงมาก"
+    },
+    {
+      "id": "krungsri-refinance",
+      "bank": "ธนาคารกรุงศรีอยุธยา",
+      "bankShort": "Krungsri",
+      "packageTitle": "Krungsri Home Loan รีไฟแนนซ์ เปลี่ยนหนี้ให้เบาลง",
+      "rate3YAvg": 3.25,
+      "minIncome": 30000,
+      "allowedOccupations": ["salaried", "government", "business"],
+      "fees": {
+        "mortgageRegistrationPct": 0.01,
+        "appraisalFee": 3000,
+        "dutyStampPct": 0.0005
+      },
+      "waiverPromos": [
+        { "id": "krungsri-free-appraisal-mrta", "label": "ฟรีค่าประเมินหลักทรัพย์เมื่อทำประกัน MRTA", "waives": ["appraisal"], "requiresMRTA": true },
+        { "id": "krungsri-free-regis-mrta", "label": "ฟรีค่าจดจำนอง 1% เมื่อทำประกัน MRTA", "waives": ["mortgageRegistration"], "requiresMRTA": true }
+      ],
+      "notes": "โปรโมชันส่วนใหญ่ผูกกับประกัน MRTA ฟรีทั้งค่าประเมินและค่าจดจำนอง"
+    }
+  ]
+}

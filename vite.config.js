@@ -6,5 +6,9 @@ export default defineConfig({
   server: {
     port: 3000,
     open: false
+  },
+  test: {
+    // Exclude the reference project copy (Next.js app with its own tests)
+    exclude: ['nee-noi-debt-planner/**', 'node_modules/**']
   }
 });

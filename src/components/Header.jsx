@@ -7,13 +7,13 @@ import {
   Wallet,
   CreditCard,
   ShieldCheck,
-  Smartphone,
   LogOut,
   Sparkles,
   ChevronRight,
   ChevronLeft,
   Trophy,
-  Landmark
+  Landmark,
+  Layers
 } from 'lucide-react';
 
 /** Sidebar nav items (reference web app labels + our extra modules). */
@@ -24,8 +24,8 @@ const NAV_ITEMS = [
   { id: 'milestones', label: 'ความสำเร็จ', short: 'รางวัล', icon: Trophy, also: [] },
   { id: 'ai', label: 'ผู้ช่วยการเงิน', short: 'AI', icon: Bot, also: [] },
   { id: 'notifications', label: 'การแจ้งเตือน', short: 'แจ้งเตือน', icon: Bell, also: [] },
-  { id: 'cashflow', label: 'กระแสเงินสด', short: 'เงินสด', icon: Wallet, also: [] },
-  { id: 'refinance', label: 'รีไฟแนนซ์บ้าน', short: 'บ้าน', icon: Landmark, also: [], adminOnly: false },
+  { id: 'refinance', label: 'รีไฟแนนซ์', short: 'รีไฟแนนซ์', icon: Landmark, also: [], adminOnly: false },
+  { id: 'consolidation', label: 'รวมหนี้', short: 'รวมหนี้', icon: Layers, also: [], adminOnly: false },
   { id: 'admin', label: 'หลังบ้าน Admin', short: 'Admin', icon: ShieldCheck, also: [], adminOnly: true }
 ];
 
@@ -33,15 +33,16 @@ const NAV_ITEMS = [
 const TAB_TITLES = {
   calculator: 'หน้าหลัก',
   compare_strategies: 'เปรียบเทียบกลยุทธ์',
-  add_debt: 'เพิ่ม / แก้ไขหนี้',
+
   payment_history: 'บันทึกชำระหนี้',
   ocr: 'สแกนใบแจ้งหนี้',
   ai: 'ผู้ช่วยการเงิน',
   notifications: 'การแจ้งเตือน',
   admin: 'หลังบ้าน Admin',
   milestones: 'ความสำเร็จและรางวัล',
-  cashflow: 'บันทึกกระแสเงินสด',
-  refinance: 'รีไฟแนนซ์บ้าน'
+  add_debt: 'เพิ่ม / แก้ไขหนี้',
+  refinance: 'รีไฟแนนซ์',
+  consolidation: 'รวมหนี้'
 };
 
 export default function Header({
@@ -139,15 +140,6 @@ export default function Header({
               <option value="user3">User 3</option>
             </select>
           )}
-
-          <button
-            onClick={() => setIsMobileView(!isMobileView)}
-            title={isMobileView ? 'ออกจากมุมมองมือถือ' : 'ดูแบบมือถือ'}
-            className={`mobile-toggle-btn ${isMobileView ? 'active' : ''}`}
-          >
-            <Smartphone />
-            {isMobileView ? 'ออกจากมุมมองมือถือ' : 'ดูแบบมือถือ'}
-          </button>
 
           <button className="top-bell" onClick={() => go('notifications')} title="การแจ้งเตือน" aria-label="การแจ้งเตือน">
             <Bell />

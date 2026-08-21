@@ -16,7 +16,7 @@ import CompareStrategiesPage from './components/CompareStrategiesPage';
 import AddEditDebtPage from './components/AddEditDebtPage';
 import MilestonesPage from './components/MilestonesPage';
 import PaymentHistoryPage from './components/PaymentHistoryPage';
-import CashflowPage from './components/CashflowPage';
+import ConsolidationModule from './components/ConsolidationModule';
 import RefinanceDashboard from './components/RefinanceDashboard';
 
 import { INITIAL_DEBTS, getViewDataForUser, saveUserDataToStorage, resetUserDataStorage } from './data/mockData';
@@ -183,8 +183,7 @@ function AppContent({ isAdmin, user, onLogout }) {
   };
 
   const handleOpenAddDebtPage = () => {
-    setEditingDebt(null);
-    setActiveTab('add_debt');
+    setActiveTab('ocr');
   };
 
   const handleOpenEditDebtPage = (debt) => {
@@ -350,6 +349,8 @@ function AppContent({ isAdmin, user, onLogout }) {
             />
           )}
 
+
+
           {/* Dedicated Page 7: Add/Edit Debt Form */}
           {activeTab === 'add_debt' && (
             <AddEditDebtPage
@@ -370,16 +371,12 @@ function AppContent({ isAdmin, user, onLogout }) {
             />
           )}
 
-          {/* Dedicated Page 9: Cash Flow & Risk Early Warning */}
-          {activeTab === 'cashflow' && (
-            <CashflowPage
+          {/* Dedicated Page 9: Debt Consolidation Module */}
+          {activeTab === 'consolidation' && (
+            <ConsolidationModule
               debts={debts}
-              setDebts={setDebts}
-              paymentLogs={paymentLogs}
-              setPaymentLogs={setPaymentLogs}
-              extraBudget={extraBudget}
-              onBack={() => setActiveTab('calculator')}
-              userName={user?.name || 'User'}
+              userName={user?.name || 'ผู้ใช้งาน'}
+              onNavigateToCalculator={() => setActiveTab('calculator')}
             />
           )}
 
@@ -388,6 +385,8 @@ function AppContent({ isAdmin, user, onLogout }) {
             <RefinanceDashboard
               userName={user?.name || 'User'}
               onBack={() => setActiveTab('calculator')}
+              onNavigateToConsolidation={() => setActiveTab('consolidation')}
+              ocrDebts={debts}
             />
           )}
 

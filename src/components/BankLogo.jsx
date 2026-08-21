@@ -14,11 +14,16 @@ import { BANK_LOGOS } from '../data/bankLogos';
 
 // bankShort -> approximate brand color
 const BRAND_COLORS = {
-  KBank: '#007864',     // กสิกรไทย (teal green)
-  SCB: '#6B2FA0',       // ไทยพาณิชย์ (purple)
-  ttb: '#005CA9',       // ทหารไทยธนชาต (blue)
-  'GH Bank': '#007A3D', // ธนาคารอาคารสงเคราะห์ (green)
-  Krungsri: '#F5A800'   // กรุงศรีอยุธยา (yellow)
+  KBank: '#007864',       // กสิกรไทย (teal green)
+  SCB: '#6B2FA0',         // ไทยพาณิชย์ (purple)
+  ttb: '#005CA9',         // ทหารไทยธนชาต (blue)
+  'GH Bank': '#007A3D',   // ธนาคารอาคารสงเคราะห์ (green)
+  Krungsri: '#F5A800',    // กรุงศรีอยุธยา (yellow)
+  'CIMB Thai': '#E31837', // ซีไอเอ็มบี ไทย (red)
+  GSB: '#00A651',         // ออมสิน (green)
+  Krungthai: '#003DA5',   // กรุงไทย (blue)
+  'Bangkok Bank': '#004B87', // กรุงเทพ (blue)
+  UOB: '#E31837'          // ยูโอบี (red)
 };
 
 // Short monogram shown inside the tile (1–3 chars)
@@ -27,7 +32,12 @@ const MONOGRAMS = {
   SCB: 'SCB',
   ttb: 'ttb',
   'GH Bank': 'GH',
-  Krungsri: 'Kr'
+  Krungsri: 'Kr',
+  'CIMB Thai': 'CIMB',
+  GSB: 'GSB',
+  Krungthai: 'KTB',
+  'Bangkok Bank': 'BBL',
+  UOB: 'UOB'
 };
 
 // Brand colors that need dark text on top (light backgrounds)
@@ -46,7 +56,7 @@ export default function BankLogo({
   size = 40,
   color = null,
   className = '',
-  rounded = 'rounded-xl'
+  rounded = 'rounded-full'
 }) {
   // Prefer an explicit logoUrl, then the bundled real logo for this bank
   const resolvedLogo = logoUrl || BANK_LOGOS[bankShort] || null;
@@ -57,7 +67,7 @@ export default function BankLogo({
         alt={`โลโก้ ${bankShort}`}
         width={size}
         height={size}
-        className={`object-contain bg-white border border-slate-200 ${rounded} ${className}`}
+        className={`object-cover bg-white border border-slate-200 ${rounded} ${className}`}
         style={{ width: size, height: size }}
       />
     );
@@ -78,9 +88,9 @@ export default function BankLogo({
       className={`flex-shrink-0 ${className}`}
     >
       {/* Brand-colored rounded tile */}
-      <rect x="1" y="1" width="46" height="46" rx="12" fill={bg} />
+      <rect x="1" y="1" width="46" height="46" rx="23" fill={bg} />
       {/* Soft top highlight for a modern gloss effect */}
-      <rect x="1" y="1" width="46" height="22" rx="12" fill="#ffffff" opacity="0.12" />
+      <rect x="1" y="1" width="46" height="22" rx="23" fill="#ffffff" opacity="0.12" />
       {/* Bank monogram */}
       <text
         x="24"

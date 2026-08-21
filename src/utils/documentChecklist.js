@@ -11,7 +11,7 @@
  */
 
 /** Occupation keys — keep in sync with refinanceRates.json + RefinanceDashboard. */
-export const OCCUPATIONS = ['salaried', 'government', 'freelance', 'business', 'pensioner'];
+export const OCCUPATIONS = ['salaried', 'government', 'freelance', 'business', 'pensioner', 'other'];
 
 /** Thai labels for each occupation (used by UI + PDF cover sheet). */
 export const OCCUPATION_LABELS = {
@@ -19,7 +19,8 @@ export const OCCUPATION_LABELS = {
   government: 'ข้าราชการ / พนักงานรัฐวิสาหกิจ (Government)',
   freelance: 'ฟรีแลนซ์ / อาชีพอิสระ (Freelance)',
   business: 'เจ้าของกิจการ / ธุรกิจ (Business Owner)',
-  pensioner: 'ผู้รับบำนาญ / เกษียณอายุ (Pensioner)'
+  pensioner: 'ผู้รับบำนาญ / เกษียณอายุ (Pensioner)',
+  other: 'อื่นๆ (ระบุ)'
 };
 
 /** Documents every applicant needs regardless of occupation. */

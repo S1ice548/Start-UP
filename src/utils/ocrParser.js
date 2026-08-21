@@ -9,14 +9,33 @@
 
 export const BALANCE_KEYWORDS = [
   'ยอดหนี้คงเหลือ', 'ยอดหนี้รวม', 'ยอดรวมหนี้', 'ยอดคงเหลือ',
-  'ยอดเงินคงเหลือ', 'ยอดหนี้', 'ยอดเงิน', 'รวมทั้งสิ้น',
-  'balance', 'total amount', 'total', 'outstanding'
+  'ยอดเงินคงเหลือ', 'ยอดหนี้', 'ยอดเงิน', 'รวมทั้งสิ้น', 'ยอดชำระรวม',
+  'ราคารวม', 'ยอดรวม', 'รวม', 'ชำระเงิน',
+  'balance', 'total amount', 'total', 'outstanding', 'amount due'
 ];
 export const MIN_PAYMENT_KEYWORDS = [
   'ยอดชำระขั้นต่ำ', 'ชำระขั้นต่ำ', 'ขั้นต่ำ', 'ยอดชำระ',
   'minimum payment', 'minimum', 'min payment', 'min pay'
 ];
 export const INTEREST_KEYWORDS = ['อัตราดอกเบี้ย', 'ดอกเบี้ย', 'interest', 'apr'];
+
+export function findLender(text) {
+  if (!text) return '';
+  const knowns = [
+    'Salford & Co.', 'Salford', 'KBank', 'กสิกร', 'SCB', 'ไทยพาณิชย์', 'Krungsri', 'กรุงศรี',
+    'TTB', 'ทีทีบี', 'Bangkok Bank', 'กรุงเทพ', 'GSB', 'ออมสิน', 'KTC', 'กรุงไทย',
+    'AEON', 'อิออน', 'Lotus', 'โลตัส', 'First Choice', 'เฟิร์สช้อยส์', 'UOB', 'ยูโอบี'
+  ];
+  const lower = text.toLowerCase();
+  for (const k of knowns) {
+    if (lower.includes(k.toLowerCase())) return k;
+  }
+  const sellerMatch = text.match(/(?:ผู้ขาย|ชื่อบัญชี|ผู้ออกเอกสาร|ร้านค้า)\s*[:\s]\s*([^\n\r,]+)/i);
+  if (sellerMatch && sellerMatch[1]) {
+    return sellerMatch[1].trim();
+  }
+  return '';
+}
 
 const THAI_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 
@@ -174,17 +193,18 @@ export function parseOcrText(rawText) {
   if (!text) return { hasText: false, data: emptyData };
 
   const balance = findAmountNear(text, BALANCE_KEYWORDS, { fallbackLargest: true, minVal: 1000 });
-  // Floor of 20 skips tiny day-of-month numbers while still catching small
-  // minimum payments (e.g. $75.00) that the old 100-baht floor dropped.
   const minPayment = findAmountNear(text, MIN_PAYMENT_KEYWORDS, { minVal: 20 });
   const interestRate = findInterestRate(text);
   const dueDate = findDueDate(text);
+  const lender = findLender(text);
+
+  const isInvoice = text.includes('ใบแจ้งหนี้') || text.toLowerCase().includes('invoice');
 
   return {
     hasText: true,
     data: {
-      name: '',
-      lender: '',
+      name: isInvoice ? `ใบแจ้งหนี้ - ${lender || 'Salford & Co.'}` : (lender || ''),
+      lender: lender || '',
       balance: balance !== null ? String(balance) : '',
       interestRate: interestRate !== null ? String(interestRate) : '',
       minPayment: minPayment !== null ? String(minPayment) : (balance !== null ? String(Math.round(balance * 0.05)) : ''),

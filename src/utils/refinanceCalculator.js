@@ -22,7 +22,7 @@ import RATE_MATRIX from '../data/refinanceRates.json';
 export const TERM_MONTHS_DEFAULT = 36; // 3 years
 
 /** Occupation keys used across the app (must match documentChecklist + JSON). */
-export const OCCUPATIONS = ['salaried', 'government', 'freelance', 'business', 'pensioner'];
+export const OCCUPATIONS = ['salaried', 'government', 'freelance', 'business', 'pensioner', 'other'];
 
 /**
  * Standard monthly amortization payment.
@@ -52,7 +52,7 @@ export function totalInterestPaid(principal, annualRatePct, months = TERM_MONTHS
 export function isPackageEligible(pkg, { monthlyIncome, occupation }) {
   if (!pkg) return false;
   const incomeOk = Number(monthlyIncome) >= Number(pkg.minIncome || 0);
-  const occupationOk = (pkg.allowedOccupations || []).includes(occupation);
+  const occupationOk = occupation === 'other' || (pkg.allowedOccupations || []).includes(occupation);
   return incomeOk && occupationOk;
 }
 

@@ -26,6 +26,11 @@ import { calculateRefinanceSavings, formatBaht, OCCUPATIONS } from '../utils/ref
 import { getRequiredDocChecklist, OCCUPATION_LABELS } from '../utils/documentChecklist';
 import { buildRefinancePdf } from '../utils/pdfPackager';
 import BankLogo from './BankLogo';
+import { useBankOffers } from '../hooks/useBankOffers';
+import { getProvinceRateInfo, RATE_TIERS } from '../data/provinceRateModifiers';
+import FormattedNumberInput from './FormattedNumberInput';
+import StepBackButton from './StepBackButton';
+import RefinanceWizard from './RefinanceWizard';
 
 /** Occupations shown in the form dropdown (Thai labels). */
 const OCCUPATION_OPTIONS = [
@@ -33,10 +38,12 @@ const OCCUPATION_OPTIONS = [
   { value: 'government', label: '🏛️ ข้าราชการ / พนักงานรัฐวิสาหกิจ (Government)' },
   { value: 'freelance', label: '💻 ฟรีแลนซ์ / อาชีพอิสระ (Freelance)' },
   { value: 'business', label: '🏢 เจ้าของกิจการ / ธุรกิจ (Business Owner)' },
-  { value: 'pensioner', label: '👵 ผู้รับบำนาญ / เกษียณอายุ (Pensioner)' }
+  { value: 'pensioner', label: '👵 ผู้รับบำนาญ / เกษียณอายุ (Pensioner)' },
+  { value: 'other', label: '✍️ อื่นๆ (ระบุอาชีพเอง)' }
 ];
 
-export default function RefinanceDashboard({ userName = 'User', onBack }) {
+export default function RefinanceDashboard({ userName = 'User', onBack, onNavigateToConsolidation, ocrDebts = [] }) {
+  const { lastUpdatedBadge, lowestRate } = useBankOffers();
   // ---------- Persistent form state ----------
   const [form, setForm] = useState(() => {
     const saved = localStorage.getItem(`nee_noi_refinance_form_${userName}`);
@@ -47,13 +54,17 @@ export default function RefinanceDashboard({ userName = 'User', onBack }) {
       name: userName || '',
       monthlyIncome: 30000,
       occupation: 'salaried',
+      customOccupation: '',
       currentBalance: 1000000,
       currentRate: 6.0,
-      wantMRTA: true
+      wantMRTA: true,
+      selectedHomeLoanId: '',
+      province: '',
+      remainingYears: 15
     };
   });
 
-  // ---------- Wizard step: 1 = input, 2 = comparison, 3 = action ----------
+  // ---------- Wizard step: 1 = input (wizard), 2 = comparison, 3 = action ----------
   const [step, setStep] = useState(1);
   const [selectedPkgId, setSelectedPkgId] = useState(null);
   const [error, setError] = useState('');
@@ -98,6 +109,41 @@ export default function RefinanceDashboard({ userName = 'User', onBack }) {
   }, [calculation]);
 
   const selected = calculation?.results.find(r => r.package.id === selectedPkgId) || calculation?.best || null;
+  // ---------- Auto-fill from debts list (AI detection) ----------
+  const homeLoans = useMemo(() => {
+    const isHomeLoan = (d) => {
+      if (d.debtCategory === 'HOME_LOAN') return true;
+      if (d.category === 'mortgage') return true;
+      const txt = `${d.name || ''} ${d.lender || ''}`.toLowerCase();
+      return txt.includes('บ้าน') || txt.includes('home') || txt.includes('สินเชื่อบ้าน') || txt.includes('จำนอง');
+    };
+    return (ocrDebts || []).filter(isHomeLoan);
+  }, [ocrDebts]);
+
+  const autoFillData = useMemo(() => {
+    const loan = homeLoans[0];
+    if (!loan) return null;
+    return {
+      name: loan.name || loan.lender || '',
+      balance: Number(loan.totalBalance || loan.balance || 0),
+      interestRate: Number(loan.interestRate || loan.rate || 0)
+    };
+  }, [homeLoans]);
+
+  // Auto-fill form from detected home loan — debt data is source of truth
+  useEffect(() => {
+    if (!autoFillData) return;
+    setForm(prev => {
+      const updated = { ...prev };
+      if (!prev.name && userName) updated.name = userName;
+      else if (!prev.name && autoFillData.name) updated.name = autoFillData.name;
+      // Always update balance/rate from debt data
+      if (autoFillData.balance > 0) updated.currentBalance = autoFillData.balance;
+      if (autoFillData.interestRate > 0) updated.currentRate = autoFillData.interestRate;
+      return updated;
+    });
+  }, [autoFillData, userName]);
+
   const requiredDocs = useMemo(() => getRequiredDocChecklist(form.occupation), [form.occupation]);
   const checkedCount = requiredDocs.filter(doc => checklist[doc.id]).length;
 
@@ -107,6 +153,11 @@ export default function RefinanceDashboard({ userName = 'User', onBack }) {
     if (!(Number(form.currentBalance) > 0)) return setError('⚠️ กรุณากรอกยอดหนี้บ้านคงเหลือ (บาท)');
     if (!(Number(form.currentRate) >= 0)) return setError('⚠️ กรุณากรอกอัตราดอกเบี้ยปัจจุบัน (%)');
     if (!form.occupation || !OCCUPATIONS.includes(form.occupation)) return setError('⚠️ กรุณาเลือกประเภทอาชีพ');
+    if (form.occupation === 'other' && (!form.customOccupation || !form.customOccupation.trim())) {
+      return setError('⚠️ กรุณาระบุประเภทอาชีพของคุณในช่องกรอกข้อความ');
+    }
+    if (!form.province || !form.province.trim()) return setError('⚠️ กรุณาเลือกจังหวัดที่ตั้งบ้าน');
+    if (!(Number(form.remainingYears) > 0)) return setError('⚠️ กรุณาระบุจำนวนปีที่เหลือเวลาผ่อน');
     setError('');
     setMessage('');
     setStep(2);
@@ -120,7 +171,7 @@ export default function RefinanceDashboard({ userName = 'User', onBack }) {
     try {
       const bytes = await buildRefinancePdf({
         applicantName: form.name || userName,
-        occupationLabel: OCCUPATION_LABELS[form.occupation] || form.occupation,
+        occupationLabel: form.occupation === 'other' ? (form.customOccupation || 'อื่นๆ (ระบุ)') : (OCCUPATION_LABELS[form.occupation] || form.occupation),
         monthlyIncome: Number(form.monthlyIncome) || 0,
         wantMRTA: !!form.wantMRTA,
         calculation,
@@ -182,9 +233,16 @@ export default function RefinanceDashboard({ userName = 'User', onBack }) {
               คำนวณยอดประหยัดสุทธิ พร้อมดาวน์โหลด PDF ชุดเอกสารไปยื่นที่สาขาเองได้เลย
             </p>
           </div>
-          <div className="flex items-center gap-2 text-[11px] bg-indigo-50/70 border border-indigo-100 rounded-xl px-3 py-2 text-indigo-700 font-bold">
-            <Info className="w-4 h-4" />
-            ทำงานออฟไลน์ 100% — ข้อมูลโปรโมชันเก็บในเครื่อง
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 text-[11px] bg-indigo-50/70 border border-indigo-100 rounded-xl px-3 py-2 text-indigo-700 font-bold">
+            <span className="flex items-center gap-1 text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
+              <Sparkles className="w-3.5 h-3.5" />
+              {lastUpdatedBadge}
+            </span>
+            <span className="text-slate-400">|</span>
+            <span className="flex items-center gap-1">
+              <Info className="w-3.5 h-3.5" />
+              อัตราดอกเบี้ยเริ่มต้น {lowestRate}%
+            </span>
           </div>
         </div>
       </div>
@@ -216,113 +274,29 @@ export default function RefinanceDashboard({ userName = 'User', onBack }) {
         ))}
       </div>
 
-      {/* ============ STEP 1: INPUT ============ */}
+      {/* ============ STEP 1: WIZARD INPUT ============ */}
       {step === 1 && (
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5">
-          <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2 border-b border-slate-100 pb-3">
-            <UserRound className="w-5 h-5 text-indigo-600" />
-            ข้อมูลผู้ยื่นกู้ และหนี้บ้านปัจจุบัน
-          </h2>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1">ชื่อผู้ยื่นกู้ (สำหรับเอกสาร PDF)</label>
-              <input
-                type="text"
-                placeholder="เช่น สมชาย ใจดี"
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="input-dark"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1">ประเภทอาชีพ *</label>
-              <select
-                value={form.occupation}
-                onChange={(e) => setForm({ ...form, occupation: e.target.value })}
-                className="input-dark cursor-pointer"
-              >
-                {OCCUPATION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </div>
-
-            <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1 flex items-center gap-1">
-                <Banknote className="w-3.5 h-3.5 text-emerald-600" />
-                รายได้ต่อเดือน (บาท) *
-              </label>
-              <input
-                type="number"
-                min="0"
-                placeholder="เช่น 30000"
-                value={form.monthlyIncome || ''}
-                onChange={(e) => setForm({ ...form, monthlyIncome: Number(e.target.value) })}
-                className="input-dark font-black text-emerald-600"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1 flex items-center gap-1">
-                <Building2 className="w-3.5 h-3.5 text-indigo-600" />
-                ยอดหนี้บ้านคงเหลือ (บาท) *
-              </label>
-              <input
-                type="number"
-                min="0"
-                placeholder="เช่น 1000000"
-                value={form.currentBalance || ''}
-                onChange={(e) => setForm({ ...form, currentBalance: Number(e.target.value) })}
-                className="input-dark font-black text-indigo-600"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1 flex items-center gap-1">
-                <Percent className="w-3.5 h-3.5 text-rose-600" />
-                อัตราดอกเบี้ยปัจจุบัน (% ต่อปี) *
-              </label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="เช่น 6.0"
-                value={form.currentRate || ''}
-                onChange={(e) => setForm({ ...form, currentRate: Number(e.target.value) })}
-                className="input-dark font-black text-rose-600"
-              />
-            </div>
-
-            <label className="flex items-center gap-2.5 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-3 cursor-pointer hover:border-indigo-300 transition-colors md:self-end">
-              <input
-                type="checkbox"
-                checked={form.wantMRTA}
-                onChange={(e) => setForm({ ...form, wantMRTA: e.target.checked })}
-                className="w-4 h-4 text-indigo-600 rounded border-slate-300"
-              />
-              <span className="text-xs font-bold text-slate-700">
-                ต้องการทำประกัน MRTA
-                <span className="block text-[10px] text-slate-400 font-medium font-normal">
-                  เปิดสิทธิ์โปรโมชันฟรีค่าจดจำนอง/ค่าประเมินของหลายธนาคาร
-                </span>
-              </span>
-            </label>
-          </div>
-
-          {error && (
-            <div className="bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold rounded-xl px-3.5 py-2.5">
-              {error}
-            </div>
-          )}
-
-          <div className="flex justify-end pt-2">
-            <button onClick={goToComparison} className="btn-gold text-xs py-3 px-6 font-extrabold cursor-pointer">
-              คำนวณและเปรียบเทียบแพ็กเกจ
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
+        <RefinanceWizard
+          form={form}
+          setForm={setForm}
+          ocrData={autoFillData}
+          ocrDebts={ocrDebts}
+          onComplete={() => {
+            setError('');
+            setMessage('');
+            setStep(2);
+          }}
+        />
       )}
+
+      {/* Floating back button */}
+      <StepBackButton
+        currentStep={step}
+        totalSteps={3}
+        onClick={() => setStep(step - 1)}
+        label={step === 2 ? 'แก้ไขข้อมูล' : 'เปลี่ยนแพ็กเกจ'}
+        visible={step >= 2}
+      />
 
       {/* ============ STEP 2: COMPARISON ============ */}
       {step === 2 && calculation && (
@@ -347,10 +321,35 @@ export default function RefinanceDashboard({ userName = 'User', onBack }) {
             </div>
           </div>
 
+          {/* Province rate info */}
+          {form.province && (() => {
+            const rateInfo = getProvinceRateInfo(form.province);
+            if (!rateInfo) return null;
+            const tierData = RATE_TIERS.find(t => t.tier === rateInfo.tier);
+            const c = tierData?.color || 'amber';
+            return (
+              <div className={`p-3.5 rounded-xl border bg-${c}-50/60 border-${c}-200 flex items-start gap-3`}>                
+                <span className="text-lg flex-shrink-0 mt-0.5">{tierData?.emoji}</span>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className={`text-xs font-bold text-${c}-700`}>{form.province}</span>
+                    <span className={`text-[10px] font-semibold text-${c}-600`}>{rateInfo.label}</span>
+                    {rateInfo.modifier > 0 ? (
+                      <span className={`text-[10px] font-black px-1.5 py-0.5 rounded bg-${c}-200 text-${c}-800`}>+{rateInfo.modifier}% จาก base</span>
+                    ) : (
+                      <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-emerald-200 text-emerald-800">อัตราต่ำสุด</span>
+                    )}
+                  </div>
+                  <p className={`text-[11px] text-${c}-600 leading-relaxed`}>{tierData?.desc}</p>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Eligible note */}
           <div className="text-xs text-slate-500 font-medium bg-indigo-50/60 border border-indigo-100 rounded-xl px-3.5 py-2.5 flex items-center gap-2">
             <BadgePercent className="w-4 h-4 text-indigo-600" />
-            พบแพ็กเกจที่คุณผ่านเกณฑ์ (รายได้ + อาชีพ) ทั้งหมด <strong className="text-indigo-700">{calculation.results.length} แพ็กเกจ</strong> — เรียงจากประหยัดสุทธิสูงสุดลงมา
+            พบแพ็กเกจที่คุณผ่านเกณฑ์ (รายได้ + อาชีพ) ทั้งหมด <strong className="text-indigo-700">{calculation.results.length} แพ็กเกจ</strong> — เรียงจากดอกเบี้ยที่ประหยัดได้มากที่สุดลงมา
           </div>
 
           {/* Candidate bank cards */}
@@ -403,26 +402,22 @@ export default function RefinanceDashboard({ userName = 'User', onBack }) {
 
                     <div className="grid grid-cols-2 gap-3 mt-4">
                       <div className="bg-white rounded-xl border border-slate-200 p-2.5">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">ประหยัดสุทธิ 3 ปี</div>
-                        <div className={`text-base font-black ${r.netSavings > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                          {formatBaht(r.netSavings)}
-                        </div>
-                      </div>
-                      <div className="bg-white rounded-xl border border-slate-200 p-2.5">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">ค่างวดใหม่/เดือน</div>
+                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">ค่างวดต่อเดือน</div>
                         <div className="text-base font-black text-indigo-600">{formatBaht(r.newMonthly)}</div>
-                      </div>
-                      <div className="bg-white rounded-xl border border-slate-200 p-2.5">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1">
-                          <CalendarClock className="w-3 h-3" /> จุดคุ้มทุน
-                        </div>
-                        <div className="text-base font-black text-slate-900">
-                          {r.breakEvenMonths === Infinity ? 'ไม่คุ้ม' : `~${r.breakEvenMonths} เดือน`}
-                        </div>
                       </div>
                       <div className="bg-white rounded-xl border border-slate-200 p-2.5">
                         <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">ดอกเบี้ยเฉลี่ย 3 ปี</div>
                         <div className="text-base font-black text-rose-600">{r.rate3YAvg}%</div>
+                      </div>
+                      <div className="bg-white rounded-xl border border-slate-200 p-2.5">
+                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">ดอกเบี้ยทั้งหมด 3 ปี</div>
+                        <div className="text-base font-black text-rose-600">{formatBaht(r.newInterest)}</div>
+                      </div>
+                      <div className="bg-white rounded-xl border border-slate-200 p-2.5">
+                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">ดอกเบี้ยที่ประหยัดได้</div>
+                        <div className={`text-base font-black ${r.grossSavings > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {formatBaht(r.grossSavings)}
+                        </div>
                       </div>
                     </div>
 
@@ -463,12 +458,12 @@ export default function RefinanceDashboard({ userName = 'User', onBack }) {
           <div className="ref-recap text-white p-6 rounded-2xl shadow-md relative overflow-hidden">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10">
               <div className="flex items-center gap-3">
-                <BankLogo bankShort={selected.bankShort} logoUrl={selected.package.logoUrl} size={48} rounded="rounded-2xl" />
+                <BankLogo bankShort={selected.bankShort} logoUrl={selected.package.logoUrl} size={48} />
                 <div>
                   <span className="text-[10px] font-black uppercase tracking-wider text-indigo-200">แพ็กเกจที่เลือก</span>
                   <h2 className="text-xl font-black pt-0.5">{selected.bank} — {selected.packageTitle}</h2>
                   <p className="text-xs text-indigo-100 font-medium mt-1">
-                    ดอกเบี้ยเฉลี่ย 3 ปี {selected.rate3YAvg}% • ค่างวดใหม่ {formatBaht(selected.newMonthly)}/เดือน • ประหยัดสุทธิ {formatBaht(selected.netSavings)}
+                    ดอกเบี้ยเฉลี่ย 3 ปี {selected.rate3YAvg}% • ค่างวดใหม่ {formatBaht(selected.newMonthly)}/เดือน • ประหยัดดอกเบี้ย {formatBaht(selected.grossSavings)}
                   </p>
                 </div>
               </div>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Upload,
   Camera,
@@ -17,6 +17,7 @@ import {
 import { createWorker } from 'tesseract.js';
 import { MOCK_OCR_SAMPLES } from '../data/mockData';
 import { parseOcrText } from '../utils/ocrParser';
+import { extractDebtDataFromImage } from '../services/geminiService';
 
 export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
   const [selectedFiles, setSelectedFiles] = useState([]);
@@ -132,27 +133,60 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
       try {
         for (let i = 0; i < scanFiles.length; i++) {
           const f = scanFiles[i];
-          const imageSource = f.file || f.previewUrl; // File object or image URL
-          let text = '';
+          let aiResult = null;
+          let isAi = false;
           let confidence = 0;
-          try {
-            const { data } = await worker.recognize(imageSource);
-            text = (data.text || '').trim();
-            confidence = Math.round(data.confidence || 0);
-          } catch (e) {
-            console.warn(`OCR recognize failed for ${f.name}:`, e);
+          let text = '';
+          let parsedData = null;
+
+          // Attempt Gemini AI processing if file object is present
+          if (f.file) {
+            try {
+              const geminiData = await extractDebtDataFromImage(f.file, { fallbackToTesseract: false });
+              if (geminiData && (geminiData.totalBalance || geminiData.issuerName || geminiData.bankName)) {
+                aiResult = geminiData;
+                isAi = true;
+                confidence = 99;
+                text = `สกัดด้วย Gemini AI Vision:\nผู้ออกเอกสาร: ${geminiData.issuerName || geminiData.bankName}\nประเภท: ${geminiData.debtCategory || geminiData.documentType}\nยอดรวม: ฿${geminiData.totalBalance}`;
+              }
+            } catch (geminiErr) {
+              console.warn(`Gemini AI scan skipped/failed for ${f.name}, falling back to local OCR:`, geminiErr);
+            }
           }
 
-          const parsed = parseOcrText(text);
+          if (aiResult) {
+            parsedData = {
+              name: aiResult.name || `ใบแจ้งหนี้ - ${aiResult.issuerName || aiResult.bankName || 'Salford & Co.'}`,
+              lender: aiResult.issuerName || aiResult.bankName || 'Salford & Co.',
+              balance: aiResult.totalBalance !== undefined && aiResult.totalBalance !== null ? String(aiResult.totalBalance) : '',
+              interestRate: aiResult.interestRate !== undefined && aiResult.interestRate !== null ? String(aiResult.interestRate) : '0',
+              minPayment: aiResult.minimumPayment !== undefined && aiResult.minimumPayment !== null ? String(aiResult.minimumPayment) : String(aiResult.totalBalance || ''),
+              dueDate: aiResult.dueDate || 'ไม่ระบุ'
+            };
+          } else {
+            // Fallback to Tesseract OCR
+            const imageSource = f.file || f.previewUrl;
+            try {
+              const { data } = await worker.recognize(imageSource);
+              text = (data.text || '').trim();
+              confidence = Math.round(data.confidence || 0);
+            } catch (e) {
+              console.warn(`OCR recognize failed for ${f.name}:`, e);
+            }
+            const parsed = parseOcrText(text);
+            parsedData = parsed.data;
+          }
+
           results.push({
             id: f.id,
             fileName: f.name,
             previewUrl: f.previewUrl,
             isMock: false,
+            isAi,
             confidence,
             text,
-            hasText: parsed.hasText,
-            data: parsed.data
+            hasText: true,
+            data: parsedData
           });
           scanned += 1;
         }
@@ -181,8 +215,29 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
     setScanResults(prev => prev.map(r => r.id === id ? { ...r, data: { ...r.data, [field]: value } } : r));
   };
 
-  // Import selected debts to Calculator
+  // Category selection state for items without a category
+  const [categoryMap, setCategoryMap] = useState({});
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+
+  // Check if any selected items are missing debtCategory
+  const uncatItems = useMemo(() => {
+    return scanResults.filter(r =>
+      selectedResultIds.includes(r.id) &&
+      !r.data.debtCategory &&
+      Number(r.data.balance) > 0
+    );
+  }, [scanResults, selectedResultIds]);
+
   const handleConfirmImport = () => {
+    // If there are unclassified items, show category picker first
+    if (uncatItems.length > 0) {
+      setShowCategoryPicker(true);
+      return;
+    }
+    doImport();
+  };
+
+  const doImport = () => {
     const itemsToImport = scanResults
       .filter(r => selectedResultIds.includes(r.id))
       .map(r => ({
@@ -193,6 +248,7 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
         interestRate: Number(r.data.interestRate) || 0,
         minPayment: Number(r.data.minPayment) || 0,
         dueDate: (r.data.dueDate || '').trim() || '15 ของทุกเดือน',
+        debtCategory: categoryMap[r.id] || r.data.debtCategory || 'OTHER',
         isScanned: true
       }))
       .filter(item => item.balance > 0);
@@ -204,6 +260,12 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
       setScanError('ยังไม่มีรายการที่กรอกยอดหนี้คงเหลือ (บาท) — กรุณากรอกยอดหนี้อย่างน้อย 1 รายการก่อนนำเข้า');
     }
   };
+
+  const updateCategory = (id, cat) => {
+    setCategoryMap(prev => ({ ...prev, [id]: cat }));
+  };
+
+  const allCategorized = uncatItems.every(r => categoryMap[r.id]);
 
   return (
     <div className="ocr-page space-y-6 animate-fade-in">
@@ -580,6 +642,73 @@ export default function OcrScanner({ onImportDebts, onNavigateToCalculator }) {
             })}
           </div>
 
+        </div>
+      )}
+
+      {/* Category Picker Modal */}
+      {showCategoryPicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4 animate-fade-in border border-slate-200">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
+                <AlertCircle className="w-5 h-5 text-amber-600" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">กรุณาระบุประเภทหนี้</h3>
+                <p className="text-xs text-slate-500">AI ไม่สามารถแยกประเภทหนี้ได้อัตโนมัติ กรุณาเลือกประเภทให้ถูกต้อง</p>
+              </div>
+            </div>
+
+            <div className="space-y-3 max-h-80 overflow-y-auto">
+              {uncatItems.map(item => (
+                <div key={item.id} className="bg-slate-50 rounded-xl border border-slate-200 p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <FileText className="w-4 h-4 text-slate-500" />
+                    <span className="text-sm font-bold text-slate-800 truncate">{item.data.name || item.fileName}</span>
+                    <span className="text-xs text-slate-500 ml-auto">฿{Number(item.data.balance || 0).toLocaleString()}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {[
+                      { value: 'CREDIT_CARD', label: '💳 บัตรเครดิต' },
+                      { value: 'PERSONAL_LOAN', label: '💰 สินเชื่อบุคคล' },
+                      { value: 'HOME_LOAN', label: '🏠 สินเชื่อบ้าน' },
+                      { value: 'BNPL', label: '🛒 ซื้อก่อนจ่ายทีหลัง' },
+                      { value: 'COMMERCIAL_INVOICE', label: '📄 ใบแจ้งหนี้' },
+                      { value: 'OTHER', label: '📋 อื่นๆ' }
+                    ].map(cat => (
+                      <button
+                        key={cat.value}
+                        onClick={() => updateCategory(item.id, cat.value)}
+                        className={`text-[11px] font-bold p-2 rounded-lg border transition-all cursor-pointer ${
+                          categoryMap[item.id] === cat.value
+                            ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                            : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-300'
+                        }`}
+                      >
+                        {cat.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-between pt-2">
+              <button
+                onClick={() => setShowCategoryPicker(false)}
+                className="text-xs font-bold text-slate-500 hover:text-slate-700 px-4 py-2"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={() => { setShowCategoryPicker(false); doImport(); }}
+                disabled={!allCategorized}
+                className={`btn-gold text-xs py-2.5 px-5 font-extrabold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed`}
+              >
+                ยืนยันนำเข้า ({uncatItems.length} รายการ)
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

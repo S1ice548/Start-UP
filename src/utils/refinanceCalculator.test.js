@@ -163,7 +163,8 @@ describe('calculateRefinanceSavings', () => {
       currentBalance: 1000000,
       currentRate: 6,
       monthlyIncome: 50000,
-      occupation: 'salaried'
+      occupation: 'salaried',
+      termMonths: 36
     });
     expect(res.meta.termYears).toBe(3);
     expect(res.meta.termMonths).toBe(36);

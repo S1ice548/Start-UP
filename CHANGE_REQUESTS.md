@@ -72,6 +72,7 @@
 ## 📋 4. ประวัติการดำเนินการแล้ว (Completed Tasks)
 *(ย้ายรายการที่ทำเสร็จแล้วมาไว้ตรงนี้เพื่อบันทึกประวัติ)*
 
+- [x] ดึงข้อมูลอัตราดอกเบี้ยจาก WEB ของธนาคาร (ทางเลือกที่ 2: CORS Proxy API พร้อม Local Fallback) — สร้าง `bankRateFetcher.js` สำหรับดึงและวิเคราะห์อัตราดอกเบี้ยรีไฟแนนซ์สดจากเว็บธนาคาร (KBank, SCB, ttb, ธอส.) ผ่าน CORS Proxy พร้อมระบบ Fallback อัตโนมัติไปยัง `refinanceRates.json` เมื่อออฟไลน์, อัปเดต `useBankOffers.js` และ `RefinanceDashboard.jsx` เพิ่มปุ่ม "🔄 ดึงข้อมูลสด" และป้ายกำกับสถานะ "🟢 สดจากเว็บธนาคาร / 🟡 ออฟไลน์สำรอง", พร้อมเพิ่ม Unit Tests ผ่าน 154/154
 - [x] สร้างไฟล์ `CHANGE_REQUESTS.md` สำหรับบันทึกคำสั่งเพิ่มเติม
 - [x] อัปเดต `debtEngine.js` เพิ่มกลยุทธ์ Tsunami, Snowflake, Fireball และระบบ AI Auto-Selected Strategy Evaluation
 - [x] สร้างส่วนประกอบ `NotificationCenter.jsx` แจ้งเตือนวันครบกำหนดชำระหนี้ พร้อมตัวกรองสถานะ

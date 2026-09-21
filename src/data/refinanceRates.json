@@ -1,6 +1,6 @@
 {
-  "disclaimer": "ข้อมูลอัตราดอกเบี้ย ค่าธรรมเนียม และเงื่อนไขในไฟล์นี้เป็นข้อมูลสาธารณะเชิงอ้างอิงเพื่อใช้คำนวณเปรียบเทียบภายในแอปเท่านั้น",
-  "updatedAt": "2026-08-21",
+  "disclaimer": "ข้อมูลอัตราดอกเบี้ยและโปรโมชันอ้างอิงจากประกาศอัตราดอกเบี้ยสินเชื่อบ้านรีไฟแนนซ์อย่างเป็นทางการของแต่ละธนาคาร (อัปเดต ก.ย. 2026)",
+  "updatedAt": "2026-09-01",
   "currency": "THB",
   "termYears": 3,
   "defaultFees": {
@@ -9,6 +9,155 @@
     "dutyStampPct": 0.0005
   },
   "packages": [
+    {
+      "id": "krungsri-refinance-opt1",
+      "bank": "ธนาคารกรุงศรีอยุธยา",
+      "bankShort": "Krungsri",
+      "packageTitle": "กรุงศรี รีไฟแนนซ์ ทางเลือก 1 (ดอกเบี้ยเฉลี่ย 3 ปี 2.55%)",
+      "rate3YAvg": 2.55,
+      "minIncome": 15000,
+      "allowedOccupations": ["salaried", "government", "freelance", "business", "pensioner", "other"],
+      "fees": {
+        "mortgageRegistrationPct": 0.01,
+        "appraisalFee": 3000,
+        "dutyStampPct": 0.0005
+      },
+      "waiverPromos": [
+        { "id": "krungsri-free-appraisal-mrta", "label": "ฟรีค่าประเมินหลักทรัพย์เมื่อทำประกัน MRTA", "waives": ["appraisal"], "requiresMRTA": true }
+      ],
+      "notes": "ปีที่ 1-2 ดอกเบี้ย 2.20% เท่ากัน เฉลี่ย 3 ปีต่ำพิเศษเพียง 2.55% (วงเงิน 1 ล้านขึ้นไป)"
+    },
+    {
+      "id": "krungsri-refinance-opt2",
+      "bank": "ธนาคารกรุงศรีอยุธยา",
+      "bankShort": "Krungsri",
+      "packageTitle": "กรุงศรี รีไฟแนนซ์ ทางเลือก 2 (ฟรีค่าจดจำนอง 1% • เฉลี่ย 3 ปี 2.90%)",
+      "rate3YAvg": 2.90,
+      "minIncome": 15000,
+      "allowedOccupations": ["salaried", "government", "freelance", "business", "pensioner", "other"],
+      "fees": {
+        "mortgageRegistrationPct": 0.01,
+        "appraisalFee": 3000,
+        "dutyStampPct": 0.0005
+      },
+      "waiverPromos": [
+        { "id": "krungsri-free-appraisal-mrta", "label": "ฟรีค่าประเมินหลักทรัพย์เมื่อทำประกัน MRTA", "waives": ["appraisal"], "requiresMRTA": true },
+        { "id": "krungsri-free-regis-mrta", "label": "ฟรีค่าจดจำนอง 1% เมื่อทำประกัน MRTA", "waives": ["mortgageRegistration"], "requiresMRTA": true }
+      ],
+      "notes": "ฟรีค่าจดจำนอง 1% เต็มจำนวน เฉลี่ย 3 ปี 2.90% เมื่อทำประกัน MRTA (วงเงิน 1 ล้านขึ้นไป)"
+    },
+    {
+      "id": "krungsri-refinance-opt3",
+      "bank": "ธนาคารกรุงศรีอยุธยา",
+      "bankShort": "Krungsri",
+      "packageTitle": "กรุงศรี รีไฟแนนซ์ ทางเลือก 3 (ปีแรกต่ำ 1.49% • เฉลี่ย 3 ปี 2.65%)",
+      "rate3YAvg": 2.65,
+      "minIncome": 15000,
+      "allowedOccupations": ["salaried", "government", "freelance", "business", "pensioner", "other"],
+      "fees": {
+        "mortgageRegistrationPct": 0.01,
+        "appraisalFee": 3000,
+        "dutyStampPct": 0.0005
+      },
+      "waiverPromos": [
+        { "id": "krungsri-free-appraisal-mrta", "label": "ฟรีค่าประเมินหลักทรัพย์เมื่อทำประกัน MRTA", "waives": ["appraisal"], "requiresMRTA": true }
+      ],
+      "notes": "อัตราดอกเบี้ยปีแรกคงที่เพียง 1.49% เฉลี่ย 3 ปี 2.65%"
+    },
+    {
+      "id": "ghbank-refinance",
+      "bank": "ธนาคารอาคารสงเคราะห์",
+      "bankShort": "GH Bank",
+      "packageTitle": "โครงการสินเชื่อบ้านสุขสันต์ (Refinance In)",
+      "rate3YAvg": 2.99,
+      "minIncome": 15000,
+      "allowedOccupations": ["salaried", "government", "freelance", "business", "pensioner", "other"],
+      "fees": {
+        "mortgageRegistrationPct": 0.01,
+        "appraisalFee": 3000,
+        "dutyStampPct": 0.0005
+      },
+      "waiverPromos": [
+        { "id": "ghbank-free-appraisal", "label": "ฟรีค่าประเมินหลักทรัพย์", "waives": ["appraisal"], "requiresMRTA": false },
+        { "id": "ghbank-free-regis-mrta", "label": "ฟรีค่าจดจำนอง 1% เมื่อทำประกัน MRTA", "waives": ["mortgageRegistration"], "requiresMRTA": true }
+      ],
+      "notes": "เงื่อนไขรายได้ผ่อนปรนที่สุด ดอกเบี้ยเฉลี่ย 3 ปี 2.99% ผ่อนได้นานสูงสุด 40 ปี"
+    },
+    {
+      "id": "kbank-refinance",
+      "bank": "ธนาคารกสิกรไทย",
+      "bankShort": "KBank",
+      "packageTitle": "K-Home Loan รีไฟแนนซ์ ปลดภาระหนี้บ้าน",
+      "rate3YAvg": 2.99,
+      "minIncome": 30000,
+      "allowedOccupations": ["salaried", "government", "business"],
+      "fees": {
+        "mortgageRegistrationPct": 0.01,
+        "appraisalFee": 3000,
+        "dutyStampPct": 0.0005
+      },
+      "waiverPromos": [
+        { "id": "kbank-free-appraisal", "label": "ฟรีค่าประเมินหลักทรัพย์", "waives": ["appraisal"], "requiresMRTA": false },
+        { "id": "kbank-free-regis-mrta", "label": "ฟรีค่าจดจำนอง 1% เมื่อทำประกัน MRTA", "waives": ["mortgageRegistration"], "requiresMRTA": true }
+      ],
+      "notes": "อัตราดอกเบี้ยเฉลี่ย 3 ปีแรกเริ่มต้น 2.99% วงเงินสูงสุด 100% ฟรีค่าประเมินหลักทรัพย์"
+    },
+    {
+      "id": "scb-refinance",
+      "bank": "ธนาคารไทยพาณิชย์",
+      "bankShort": "SCB",
+      "packageTitle": "SCB บ้าน ปลดภาระ รีไฟแนนซ์ ลดดอกเบี้ย",
+      "rate3YAvg": 2.99,
+      "minIncome": 15000,
+      "allowedOccupations": ["salaried", "government", "freelance", "business", "pensioner", "other"],
+      "fees": {
+        "mortgageRegistrationPct": 0.01,
+        "appraisalFee": 3000,
+        "dutyStampPct": 0.0005
+      },
+      "waiverPromos": [
+        { "id": "scb-free-appraisal", "label": "ฟรีค่าประเมินหลักทรัพย์", "waives": ["appraisal"], "requiresMRTA": false },
+        { "id": "scb-free-regis-mrta", "label": "ฟรีค่าจดจำนอง 1% เมื่อทำประกัน MRTA", "waives": ["mortgageRegistration"], "requiresMRTA": true }
+      ],
+      "notes": "อัตราดอกเบี้ยเฉลี่ย 3 ปีเริ่มต้น 2.99% พร้อมสิทธิ์ฟรีค่าประเมินและจดจำนอง"
+    },
+    {
+      "id": "ttb-refinance",
+      "bank": "ธนาคารทหารไทยธนชาต",
+      "bankShort": "ttb",
+      "packageTitle": "ttb home refinance & top-up",
+      "rate3YAvg": 3.25,
+      "minIncome": 15000,
+      "allowedOccupations": ["salaried", "government", "freelance", "business", "pensioner", "other"],
+      "fees": {
+        "mortgageRegistrationPct": 0.01,
+        "appraisalFee": 3000,
+        "dutyStampPct": 0.0005
+      },
+      "waiverPromos": [
+        { "id": "ttb-free-appraisal", "label": "ฟรีค่าประเมินหลักทรัพย์", "waives": ["appraisal"], "requiresMRTA": false },
+        { "id": "ttb-free-regis-mrta", "label": "ฟรีค่าจดจำนอง 1% เมื่อทำประกัน MRTA", "waives": ["mortgageRegistration"], "requiresMRTA": true }
+      ],
+      "notes": "ฟรีค่าจดจำนอง 1% + ฟรีค่าประเมิน เฉลี่ย 3 ปี 3.25% ยื่นได้ทุกอาชีพ"
+    },
+    {
+      "id": "gsb-refinance",
+      "bank": "ธนาคารออมสิน",
+      "bankShort": "GSB",
+      "packageTitle": "สินเชื่อบ้านผ่อนสบาย รีไฟแนนซ์ ออมสิน",
+      "rate3YAvg": 2.99,
+      "minIncome": 15000,
+      "allowedOccupations": ["salaried", "government", "freelance", "business", "pensioner", "other"],
+      "fees": {
+        "mortgageRegistrationPct": 0.01,
+        "appraisalFee": 3000,
+        "dutyStampPct": 0.0005
+      },
+      "waiverPromos": [
+        { "id": "gsb-free-appraisal", "label": "ฟรีค่าประเมินหลักประกัน", "waives": ["appraisal"], "requiresMRTA": false }
+      ],
+      "notes": "อัตราดอกเบี้ยเฉลี่ย 3 ปี 2.99% ผ่อนสบาย อนุมัติไว"
+    },
     {
       "id": "cimbt-refinance",
       "bank": "ธนาคารซีไอเอ็มบี ไทย",
@@ -26,174 +175,7 @@
         { "id": "cimbt-free-appraisal", "label": "ฟรีค่าประเมินหลักทรัพย์", "waives": ["appraisal"], "requiresMRTA": false },
         { "id": "cimbt-free-regis-mrta", "label": "ฟรีค่าจดจำนอง 1% เมื่อทำประกัน MRTA", "waives": ["mortgageRegistration"], "requiresMRTA": true }
       ],
-      "notes": "อัตราดอกเบี้ยเฉลี่ย 3 ปีแรกต่ำพิเศษ 3.49% ฟรีค่าจดจำนองและค่าประเมิน"
-    },
-    {
-      "id": "ghbank-refinance",
-      "bank": "ธนาคารอาคารสงเคราะห์",
-      "bankShort": "GH Bank",
-      "packageTitle": "โครงการสินเชื่อบ้านสุขสันต์ (Refinance In)",
-      "rate3YAvg": 3.50,
-      "minIncome": 15000,
-      "allowedOccupations": ["salaried", "government", "freelance", "business", "pensioner", "other"],
-      "fees": {
-        "mortgageRegistrationPct": 0.01,
-        "appraisalFee": 3000,
-        "dutyStampPct": 0.0005
-      },
-      "waiverPromos": [
-        { "id": "ghbank-free-appraisal", "label": "ฟรีค่าประเมินหลักทรัพย์", "waives": ["appraisal"], "requiresMRTA": false },
-        { "id": "ghbank-free-regis-mrta", "label": "ฟรีค่าจดจำนอง 1% เมื่อทำประกัน MRTA", "waives": ["mortgageRegistration"], "requiresMRTA": true }
-      ],
-      "notes": "เงื่อนไขรายได้ผ่อนปรนที่สุด ผ่อนได้นานสูงสุด 40 ปี"
-    },
-    {
-      "id": "gsb-refinance",
-      "bank": "ธนาคารออมสิน",
-      "bankShort": "GSB",
-      "packageTitle": "สินเชื่อบ้านผ่อนสบาย รีไฟแนนซ์ ออมสิน",
-      "rate3YAvg": 3.59,
-      "minIncome": 15000,
-      "allowedOccupations": ["salaried", "government", "freelance", "business", "pensioner", "other"],
-      "fees": {
-        "mortgageRegistrationPct": 0.01,
-        "appraisalFee": 3000,
-        "dutyStampPct": 0.0005
-      },
-      "waiverPromos": [
-        { "id": "gsb-free-appraisal", "label": "ฟรีค่าประเมินหลักประกัน", "waives": ["appraisal"], "requiresMRTA": false }
-      ],
-      "notes": "อัตราดอกเบี้ยปีแรกคงที่ 1.99% ฟรีค่าธรรมเนียมยื่นกู้"
-    },
-    {
-      "id": "ttb-refinance",
-      "bank": "ธนาคารทหารไทยธนชาต",
-      "bankShort": "ttb",
-      "packageTitle": "ttb home refinance & top-up",
-      "rate3YAvg": 3.65,
-      "minIncome": 22000,
-      "allowedOccupations": ["salaried", "government", "freelance", "business", "pensioner", "other"],
-      "fees": {
-        "mortgageRegistrationPct": 0.01,
-        "appraisalFee": 3000,
-        "dutyStampPct": 0.0005
-      },
-      "waiverPromos": [
-        { "id": "ttb-free-appraisal", "label": "ฟรีค่าประเมินหลักทรัพย์", "waives": ["appraisal"], "requiresMRTA": false },
-        { "id": "ttb-free-regis-mrta", "label": "ฟรีค่าจดจำนอง 1% เมื่อทำประกัน MRTA", "waives": ["mortgageRegistration"], "requiresMRTA": true }
-      ],
-      "notes": "รับทุกอาชีพ ยื่นได้ทั้งเงินเดือน ฟรีแลนซ์ และเจ้าของกิจการ"
-    },
-    {
-      "id": "ktb-refinance",
-      "bank": "ธนาคารกรุงไทย",
-      "bankShort": "Krungthai",
-      "packageTitle": "สินเชื่อรีไฟแนนซ์บ้าน กรุงไทยสุขใจ",
-      "rate3YAvg": 3.69,
-      "minIncome": 15000,
-      "allowedOccupations": ["salaried", "government", "freelance", "business", "pensioner", "other"],
-      "fees": {
-        "mortgageRegistrationPct": 0.01,
-        "appraisalFee": 3000,
-        "dutyStampPct": 0.0005
-      },
-      "waiverPromos": [
-        { "id": "ktb-free-appraisal", "label": "ฟรีค่าประเมินหลักประกัน", "waives": ["appraisal"], "requiresMRTA": false }
-      ],
-      "notes": "ดอกเบี้ยเริ่มต้น 1.75% ในปีแรก วงเงินสูงสุด 100%"
-    },
-    {
-      "id": "kbank-refinance",
-      "bank": "ธนาคารกสิกรไทย",
-      "bankShort": "KBank",
-      "packageTitle": "K-Home Loan รีไฟแนนซ์ ปลดภาระหนี้บ้าน",
-      "rate3YAvg": 3.75,
-      "minIncome": 30000,
-      "allowedOccupations": ["salaried", "government", "business"],
-      "fees": {
-        "mortgageRegistrationPct": 0.01,
-        "appraisalFee": 3000,
-        "dutyStampPct": 0.0005
-      },
-      "waiverPromos": [
-        { "id": "kbank-free-appraisal", "label": "ฟรีค่าประเมินหลักทรัพย์", "waives": ["appraisal"], "requiresMRTA": false },
-        { "id": "kbank-free-regis-mrta", "label": "ฟรีค่าจดจำนอง 1% เมื่อทำประกัน MRTA", "waives": ["mortgageRegistration"], "requiresMRTA": true }
-      ],
-      "notes": "วงเงินกู้สูงสุด 100% ของราคาประเมิน ฟรีค่าประเมินทุกกรณี"
-    },
-    {
-      "id": "bbl-refinance",
-      "bank": "ธนาคารกรุงเทพ",
-      "bankShort": "Bangkok Bank",
-      "packageTitle": "สินเชื่อบ้านรีไฟแนนซ์ ธนาคารกรุงเทพ",
-      "rate3YAvg": 3.79,
-      "minIncome": 20000,
-      "allowedOccupations": ["salaried", "government", "freelance", "business"],
-      "fees": {
-        "mortgageRegistrationPct": 0.01,
-        "appraisalFee": 3000,
-        "dutyStampPct": 0.0005
-      },
-      "waiverPromos": [
-        { "id": "bbl-free-appraisal", "label": "ฟรีค่าประเมินหลักทรัพย์", "waives": ["appraisal"], "requiresMRTA": false }
-      ],
-      "notes": "ผ่อนแบบคงที่และลอยตัว รวมหนี้เอนกประสงค์ได้"
-    },
-    {
-      "id": "scb-refinance",
-      "bank": "ธนาคารไทยพาณิชย์",
-      "bankShort": "SCB",
-      "packageTitle": "SCB บ้าน ปลดภาระ รีไฟแนนซ์ ลดดอกเบี้ย",
-      "rate3YAvg": 3.85,
-      "minIncome": 25000,
-      "allowedOccupations": ["salaried", "government", "freelance"],
-      "fees": {
-        "mortgageRegistrationPct": 0.01,
-        "appraisalFee": 3000,
-        "dutyStampPct": 0.0005
-      },
-      "waiverPromos": [
-        { "id": "scb-free-appraisal", "label": "ฟรีค่าประเมินหลักทรัพย์", "waives": ["appraisal"], "requiresMRTA": false },
-        { "id": "scb-free-regis-mrta", "label": "ฟรีค่าจดจำนอง 1% เมื่อทำประกัน MRTA", "waives": ["mortgageRegistration"], "requiresMRTA": true }
-      ],
-      "notes": "อัตราดอกเบี้ยต่ำสุดในตลาดช่วงโปรโมชัน พร้อมฟรีค่าประเมิน"
-    },
-    {
-      "id": "uob-refinance",
-      "bank": "ธนาคารยูโอบี",
-      "bankShort": "UOB",
-      "packageTitle": "สินเชื่อบ้านรีไฟแนนซ์ UOB Home Loan",
-      "rate3YAvg": 3.89,
-      "minIncome": 30000,
-      "allowedOccupations": ["salaried", "government", "business"],
-      "fees": {
-        "mortgageRegistrationPct": 0.01,
-        "appraisalFee": 3000,
-        "dutyStampPct": 0.0005
-      },
-      "waiverPromos": [
-        { "id": "uob-free-appraisal", "label": "ฟรีค่าประเมินหลักทรัพย์", "waives": ["appraisal"], "requiresMRTA": false }
-      ],
-      "notes": "วงเงินอนุมัติสูงสุด 100% ทราบผลเบื้องต้นใน 3 วัน"
-    },
-    {
-      "id": "krungsri-refinance",
-      "bank": "ธนาคารกรุงศรีอยุธยา",
-      "bankShort": "Krungsri",
-      "packageTitle": "Krungsri Home Loan รีไฟแนนซ์ เปลี่ยนหนี้ให้เบาลง",
-      "rate3YAvg": 3.90,
-      "minIncome": 30000,
-      "allowedOccupations": ["salaried", "government", "business"],
-      "fees": {
-        "mortgageRegistrationPct": 0.01,
-        "appraisalFee": 3000,
-        "dutyStampPct": 0.0005
-      },
-      "waiverPromos": [
-        { "id": "krungsri-free-appraisal-mrta", "label": "ฟรีค่าประเมินหลักทรัพย์เมื่อทำประกัน MRTA", "waives": ["appraisal"], "requiresMRTA": true },
-        { "id": "krungsri-free-regis-mrta", "label": "ฟรีค่าจดจำนอง 1% เมื่อทำประกัน MRTA", "waives": ["mortgageRegistration"], "requiresMRTA": true }
-      ],
-      "notes": "โปรโมชันส่วนใหญ่ผูกกับประกัน MRTA ฟรีทั้งค่าประเมินและค่าจดจำนอง"
+      "notes": "อัตราดอกเบี้ยเฉลี่ย 3 ปีแรก 3.49% ฟรีค่าจดจำนองและค่าประเมิน"
     }
   ]
 }

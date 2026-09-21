@@ -43,12 +43,18 @@ const OCCUPATION_OPTIONS = [
 ];
 
 export default function RefinanceDashboard({ userName = 'User', onBack, onNavigateToConsolidation, ocrDebts = [] }) {
-  const { lastUpdatedBadge, lowestRate } = useBankOffers();
+  const { lastUpdatedBadge, lowestRate, rateMatrix, isLive, isFetching, refreshRates } = useBankOffers();
   // ---------- Persistent form state ----------
   const [form, setForm] = useState(() => {
     const saved = localStorage.getItem(`nee_noi_refinance_form_${userName}`);
     if (saved) {
-      try { return JSON.parse(saved); } catch (e) { /* ignore malformed */ }
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.remainingYears && !parsed.remainingMonths) {
+          parsed.remainingMonths = parsed.remainingYears * 12;
+        }
+        return parsed;
+      } catch (e) { /* ignore malformed */ }
     }
     return {
       name: userName || '',
@@ -60,7 +66,7 @@ export default function RefinanceDashboard({ userName = 'User', onBack, onNaviga
       wantMRTA: true,
       selectedHomeLoanId: '',
       province: '',
-      remainingYears: 15
+      remainingMonths: 180
     };
   });
 
@@ -97,9 +103,10 @@ export default function RefinanceDashboard({ userName = 'User', onBack, onNaviga
       monthlyIncome: income,
       occupation: form.occupation,
       wantMRTA: form.wantMRTA,
-      termYears: 3
+      termYears: 3,
+      packages: rateMatrix?.packages
     });
-  }, [form.monthlyIncome, form.currentBalance, form.currentRate, form.occupation, form.wantMRTA]);
+  }, [form.monthlyIncome, form.currentBalance, form.currentRate, form.occupation, form.wantMRTA, rateMatrix]);
 
   // Default-select the best package when results appear
   useEffect(() => {
@@ -157,7 +164,7 @@ export default function RefinanceDashboard({ userName = 'User', onBack, onNaviga
       return setError('⚠️ กรุณาระบุประเภทอาชีพของคุณในช่องกรอกข้อความ');
     }
     if (!form.province || !form.province.trim()) return setError('⚠️ กรุณาเลือกจังหวัดที่ตั้งบ้าน');
-    if (!(Number(form.remainingYears) > 0)) return setError('⚠️ กรุณาระบุจำนวนปีที่เหลือเวลาผ่อน');
+    if (!(Number(form.remainingMonths) > 0)) return setError('⚠️ กรุณาระบุจำนวนเดือนที่เหลือเวลาผ่อน');
     setError('');
     setMessage('');
     setStep(2);
@@ -174,6 +181,7 @@ export default function RefinanceDashboard({ userName = 'User', onBack, onNaviga
         occupationLabel: form.occupation === 'other' ? (form.customOccupation || 'อื่นๆ (ระบุ)') : (OCCUPATION_LABELS[form.occupation] || form.occupation),
         monthlyIncome: Number(form.monthlyIncome) || 0,
         wantMRTA: !!form.wantMRTA,
+        remainingMonths: Number(form.remainingMonths) || 180,
         calculation,
         selected,
         checklist: requiredDocs
@@ -229,15 +237,24 @@ export default function RefinanceDashboard({ userName = 'User', onBack, onNaviga
               รีไฟแนนซ์บ้าน ลดดอกเบี้ย ลดค่างวด
             </h1>
             <p className="text-xs text-slate-500 font-medium mt-1 max-w-xl leading-relaxed">
-              เปรียบเทียบโปรโมชันรีไฟแนนซ์จากธนาคารชั้นนำจากข้อมูลในแอป (ไม่ใช้ API ธนาคาร)
+              เปรียบเทียบโปรโมชันรีไฟแนนซ์จากธนาคารชั้นนำ ดึงข้อมูลสดจากเว็บธนาคารพร้อมระบบออฟไลน์สำรอง
               คำนวณยอดประหยัดสุทธิ พร้อมดาวน์โหลด PDF ชุดเอกสารไปยื่นที่สาขาเองได้เลย
             </p>
           </div>
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 text-[11px] bg-indigo-50/70 border border-indigo-100 rounded-xl px-3 py-2 text-indigo-700 font-bold">
-            <span className="flex items-center gap-1 text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
+            <span className={`flex items-center gap-1 px-2 py-0.5 rounded ${isLive ? 'text-emerald-700 bg-emerald-100' : 'text-amber-800 bg-amber-100'}`}>
               <Sparkles className="w-3.5 h-3.5" />
               {lastUpdatedBadge}
             </span>
+            <button
+              onClick={() => refreshRates(true)}
+              disabled={isFetching}
+              className="flex items-center gap-1 px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white transition-all cursor-pointer disabled:opacity-50"
+              title="ดึงข้อมูลอัตราดอกเบี้ยล่าสุดสดๆ จากเว็บธนาคาร"
+            >
+              <RefreshCw className={`w-3 h-3 ${isFetching ? 'animate-spin' : ''}`} />
+              {isFetching ? 'กำลังดึง...' : '🔄 ดึงข้อมูลสด'}
+            </button>
             <span className="text-slate-400">|</span>
             <span className="flex items-center gap-1">
               <Info className="w-3.5 h-3.5" />
@@ -316,7 +333,7 @@ export default function RefinanceDashboard({ userName = 'User', onBack, onNaviga
               <div className="text-lg font-black text-slate-900">{formatBaht(calculation.current.monthly)}/เดือน</div>
             </div>
             <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/80">
-              <div className="text-xs text-slate-500 font-medium">ดอกเบี้ยรวม 3 ปี (ปัจจุบัน)</div>
+              <div className="text-xs text-slate-500 font-medium">ดอกเบี้ยรวม 36 เดือน (ปัจจุบัน)</div>
               <div className="text-lg font-black text-slate-900">{formatBaht(calculation.current.totalInterest)}</div>
             </div>
           </div>
@@ -406,11 +423,11 @@ export default function RefinanceDashboard({ userName = 'User', onBack, onNaviga
                         <div className="text-base font-black text-indigo-600">{formatBaht(r.newMonthly)}</div>
                       </div>
                       <div className="bg-white rounded-xl border border-slate-200 p-2.5">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">ดอกเบี้ยเฉลี่ย 3 ปี</div>
+                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">ดอกเบี้ยเฉลี่ย 36 เดือน</div>
                         <div className="text-base font-black text-rose-600">{r.rate3YAvg}%</div>
                       </div>
                       <div className="bg-white rounded-xl border border-slate-200 p-2.5">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">ดอกเบี้ยทั้งหมด 3 ปี</div>
+                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">ดอกเบี้ยทั้งหมด 36 เดือน</div>
                         <div className="text-base font-black text-rose-600">{formatBaht(r.newInterest)}</div>
                       </div>
                       <div className="bg-white rounded-xl border border-slate-200 p-2.5">
@@ -463,7 +480,7 @@ export default function RefinanceDashboard({ userName = 'User', onBack, onNaviga
                   <span className="text-[10px] font-black uppercase tracking-wider text-indigo-200">แพ็กเกจที่เลือก</span>
                   <h2 className="text-xl font-black pt-0.5">{selected.bank} — {selected.packageTitle}</h2>
                   <p className="text-xs text-indigo-100 font-medium mt-1">
-                    ดอกเบี้ยเฉลี่ย 3 ปี {selected.rate3YAvg}% • ค่างวดใหม่ {formatBaht(selected.newMonthly)}/เดือน • ประหยัดดอกเบี้ย {formatBaht(selected.grossSavings)}
+                    ดอกเบี้ยเฉลี่ย 36 เดือน {selected.rate3YAvg}% • ค่างวดใหม่ {formatBaht(selected.newMonthly)}/เดือน • ประหยัดดอกเบี้ย {formatBaht(selected.grossSavings)}
                   </p>
                 </div>
               </div>

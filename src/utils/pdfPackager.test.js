@@ -35,6 +35,7 @@ describe('buildRefinancePdf', () => {
       occupationLabel: 'พนักงานเงินเดือน (Salaried)',
       monthlyIncome: 50000,
       wantMRTA: true,
+      remainingMonths: 180,
       calculation,
       selected,
       checklist: getRequiredDocChecklist('salaried')

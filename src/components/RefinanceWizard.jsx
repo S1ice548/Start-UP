@@ -119,7 +119,7 @@ export default function RefinanceWizard({ form, setForm, onComplete, ocrData = n
       { key: 'balance', label: 'ยอดหนี้' },
       { key: 'rate', label: 'ดอกเบี้ย' },
       { key: 'province', label: 'จังหวัด' },
-      { key: 'remainingYears', label: 'เหลือผ่อน' },
+      { key: 'remainingMonths', label: 'เหลือผ่อน' },
       { key: 'mrta', label: 'MRTA' },
       { key: 'summary', label: 'ตรวจสอบ' }
     );
@@ -150,7 +150,7 @@ export default function RefinanceWizard({ form, setForm, onComplete, ocrData = n
       case 'balance': return Number(form.currentBalance) > 0;
       case 'rate': return Number(form.currentRate) >= 0;
       case 'province': return form.province && form.province.trim().length > 0;
-      case 'remainingYears': return Number(form.remainingYears) > 0;
+      case 'remainingMonths': return Number(form.remainingMonths) > 0;
       case 'mrta': return true;
       case 'summary': return true;
       default: return false;
@@ -209,11 +209,10 @@ export default function RefinanceWizard({ form, setForm, onComplete, ocrData = n
                   <button
                     key={loan.id}
                     onClick={() => setForm({ ...form, selectedHomeLoanId: loan.id })}
-                    className={`w-full text-left p-4 rounded-xl border-2 transition-all cursor-pointer ${
-                      isSelected
+                    className={`w-full text-left p-4 rounded-xl border-2 transition-all cursor-pointer ${isSelected
                         ? 'border-indigo-500 bg-indigo-50/60 shadow-md ring-1 ring-indigo-400/20'
                         : 'border-slate-200 bg-white hover:border-indigo-300 hover:bg-slate-50/50'
-                    }`}
+                      }`}
                   >
                     <div className="flex items-center justify-between">
                       <div>
@@ -258,11 +257,10 @@ export default function RefinanceWizard({ form, setForm, onComplete, ocrData = n
                 <button
                   key={opt.value}
                   onClick={() => setForm({ ...form, occupation: opt.value })}
-                  className={`text-left p-3 rounded-xl border-2 transition-all cursor-pointer ${
-                    form.occupation === opt.value
+                  className={`text-left p-3 rounded-xl border-2 transition-all cursor-pointer ${form.occupation === opt.value
                       ? 'border-indigo-500 bg-indigo-50/60 shadow-md ring-1 ring-indigo-400/20'
                       : 'border-slate-200 bg-white hover:border-indigo-300 hover:bg-slate-50/50'
-                  }`}
+                    }`}
                 >
                   <div className="text-sm font-bold text-slate-900">{opt.label}</div>
                   <div className="text-[11px] text-slate-500 mt-0.5">{opt.desc}</div>
@@ -402,23 +400,23 @@ export default function RefinanceWizard({ form, setForm, onComplete, ocrData = n
           </QuestionCard>
         )}
 
-        {/* ===== Sub-step: Remaining Years ===== */}
-        {currentStepKey === 'remainingYears' && (
+        {/* ===== Sub-step: Remaining Months ===== */}
+        {currentStepKey === 'remainingMonths' && (
           <QuestionCard
             icon={<CalendarClock className="w-5 h-5 text-amber-600" />}
-            botMessage="เหลือเวลาผ่อนอีกกี่ปีครับ? ⏳ (นับจากวันนี้จนครบสัญญาเงินกู้)"
+            botMessage="เหลือเวลาผ่อนอีกกี่เดือนครับ? ⏳ (นับจากวันนี้จนครบสัญญาเงินกู้)"
           >
             <div className="mt-3">
               <FormattedNumberInput
-                value={form.remainingYears || 0}
-                onChange={(v) => setForm({ ...form, remainingYears: v })}
+                value={form.remainingMonths || 0}
+                onChange={(v) => setForm({ ...form, remainingMonths: v })}
                 min={1}
-                max={50}
-                suffix="ปี"
-                placeholder="เช่น 15"
+                max={600}
+                suffix="เดือน"
+                placeholder="เช่น 180"
                 className="[&_input]:input-dark [&_input]:text-lg [&_input]:font-black [&_input]:text-amber-600"
               />
-              <p className="text-[11px] text-slate-400 mt-1.5">ระบุจำนวนปีที่เหลืออยู่ในสัญญาเดิม</p>
+              <p className="text-[11px] text-slate-400 mt-1.5">ระบุจำนวนเดือนที่เหลืออยู่ในสัญญาเดิม</p>
             </div>
           </QuestionCard>
         )}
@@ -432,11 +430,10 @@ export default function RefinanceWizard({ form, setForm, onComplete, ocrData = n
             <div className="flex gap-3 mt-3">
               <button
                 onClick={() => setForm({ ...form, wantMRTA: true })}
-                className={`flex-1 p-4 rounded-xl border-2 transition-all cursor-pointer text-center ${
-                  form.wantMRTA
+                className={`flex-1 p-4 rounded-xl border-2 transition-all cursor-pointer text-center ${form.wantMRTA
                     ? 'border-emerald-500 bg-emerald-50/60 shadow-md'
                     : 'border-slate-200 bg-white hover:border-emerald-300'
-                }`}
+                  }`}
               >
                 <ShieldCheck className={`w-8 h-8 mx-auto mb-2 ${form.wantMRTA ? 'text-emerald-600' : 'text-slate-400'}`} />
                 <div className="text-sm font-bold text-slate-900">✅ ต้องการ MRTA</div>
@@ -444,11 +441,10 @@ export default function RefinanceWizard({ form, setForm, onComplete, ocrData = n
               </button>
               <button
                 onClick={() => setForm({ ...form, wantMRTA: false })}
-                className={`flex-1 p-4 rounded-xl border-2 transition-all cursor-pointer text-center ${
-                  !form.wantMRTA
+                className={`flex-1 p-4 rounded-xl border-2 transition-all cursor-pointer text-center ${!form.wantMRTA
                     ? 'border-slate-400 bg-slate-50/60 shadow-md'
                     : 'border-slate-200 bg-white hover:border-slate-300'
-                }`}
+                  }`}
               >
                 <ShieldCheck className={`w-8 h-8 mx-auto mb-2 ${!form.wantMRTA ? 'text-slate-600' : 'text-slate-400'}`} />
                 <div className="text-sm font-bold text-slate-900">❌ ไม่ต้องการ</div>
@@ -474,7 +470,7 @@ export default function RefinanceWizard({ form, setForm, onComplete, ocrData = n
               <SummaryRow label="ยอดหนี้บ้านคงเหลือ" value={`฿${Number(form.currentBalance || 0).toLocaleString()}`} color="text-indigo-600" />
               <SummaryRow label="อัตราดอกเบี้ยปัจจุบัน" value={`${form.currentRate}% / ปี`} color="text-rose-600" />
               <SummaryRow label="จังหวัดที่ตั้งบ้าน" value={form.province || '-'} color="text-emerald-600" />
-              <SummaryRow label="เหลือเวลาผ่อน" value={form.remainingYears ? `${form.remainingYears} ปี` : '-'} color="text-amber-600" />
+              <SummaryRow label="เหลือเวลาผ่อน" value={form.remainingMonths ? `${form.remainingMonths} เดือน` : '-'} color="text-amber-600" />
               <SummaryRow label="ประกัน MRTA" value={form.wantMRTA ? '✅ ต้องการ' : '❌ ไม่ต้องการ'} />
             </div>
           </QuestionCard>
@@ -486,11 +482,10 @@ export default function RefinanceWizard({ form, setForm, onComplete, ocrData = n
         <button
           onClick={goBack}
           disabled={subStep === 0}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${
-            subStep === 0
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${subStep === 0
               ? 'text-slate-300 cursor-not-allowed'
               : 'text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 cursor-pointer border border-slate-200 hover:border-indigo-300'
-          }`}
+            }`}
         >
           <ArrowLeft className="w-4 h-4" />
           ย้อนกลับ
@@ -499,11 +494,10 @@ export default function RefinanceWizard({ form, setForm, onComplete, ocrData = n
         <button
           onClick={goNext}
           disabled={!canNext()}
-          className={`flex items-center gap-2 px-6 py-3 rounded-xl text-xs font-extrabold transition-all shadow-lg ${
-            canNext()
+          className={`flex items-center gap-2 px-6 py-3 rounded-xl text-xs font-extrabold transition-all shadow-lg ${canNext()
               ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/30 hover:shadow-indigo-500/50 active:scale-[0.98] cursor-pointer'
               : 'bg-slate-200 text-slate-400 shadow-none cursor-not-allowed'
-          }`}
+            }`}
         >
           {currentStepKey === 'summary' ? (
             <>

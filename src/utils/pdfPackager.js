@@ -113,7 +113,7 @@ function drawKV(page, fonts, x, y, label, value, { labelW = 150, size = 10.5, va
 /**
  * Page 1 — Refinance Application Cover Sheet.
  */
-function drawCoverSheet(page, fonts, { applicantName, occupationLabel, monthlyIncome, wantMRTA, calculation, selected, dateStr }) {
+function drawCoverSheet(page, fonts, { applicantName, occupationLabel, monthlyIncome, wantMRTA, remainingMonths, calculation, selected, dateStr }) {
   let y = PAGE_H;
 
   // ---- Header band ----
@@ -137,6 +137,9 @@ function drawCoverSheet(page, fonts, { applicantName, occupationLabel, monthlyIn
   y = drawKV(page, fonts, MARGIN, y, 'อาชีพ:', occupationLabel);
   y = drawKV(page, fonts, MARGIN, y, 'รายได้ต่อเดือน:', `${fmt(monthlyIncome)} บาท`);
   y = drawKV(page, fonts, MARGIN, y, 'ประกัน MRTA:', wantMRTA ? 'ต้องการทำ (ใช้สิทธิ์ฟรีค่าธรรมเนียมตามโปรโมชัน)' : 'ไม่ทำ');
+  if (remainingMonths) {
+    y = drawKV(page, fonts, MARGIN, y, 'ระยะเวลาผ่อนคงเหลือ:', `${remainingMonths} เดือน`);
+  }
   y -= 8;
 
   // ---- 2. Existing debt vs new bank ----
@@ -146,15 +149,15 @@ function drawCoverSheet(page, fonts, { applicantName, occupationLabel, monthlyIn
   y = drawKV(page, fonts, MARGIN, y, 'ค่างวดปัจจุบัน:', `${fmt(calculation.current.monthly)} บาท/เดือน`);
   y = drawKV(page, fonts, MARGIN, y, 'ธนาคารใหม่:', `${selected.bank} (${selected.bankShort})`);
   y = drawKV(page, fonts, MARGIN, y, 'แพ็กเกจ:', selected.packageTitle);
-  y = drawKV(page, fonts, MARGIN, y, 'อัตราดอกเบี้ยใหม่ (เฉลี่ย 3 ปี):', `${selected.rate3YAvg}% ต่อปี`);
+  y = drawKV(page, fonts, MARGIN, y, 'อัตราดอกเบี้ยใหม่ (เฉลี่ย 36 เดือน):', `${selected.rate3YAvg}% ต่อปี`);
   y = drawKV(page, fonts, MARGIN, y, 'ค่างวดใหม่:', `${fmt(selected.newMonthly)} บาท/เดือน`, { valueColor: C.emerald });
   y = drawKV(page, fonts, MARGIN, y, 'ค่างวดลดลงต่อเดือน:', `${fmt(calculation.current.monthly - selected.newMonthly)} บาท`, { valueColor: C.emerald });
   y -= 8;
 
   // ---- 3. Net savings summary ----
   y = drawSectionTitle(page, fonts.bold, '3. ผลการประหยัดสุทธิ (Net Savings)', MARGIN, y);
-  y = drawKV(page, fonts, MARGIN, y, 'ดอกเบี้ย 3 ปี (ปัจจุบัน):', `${fmt(calculation.current.totalInterest)} บาท`);
-  y = drawKV(page, fonts, MARGIN, y, 'ดอกเบี้ย 3 ปี (แพ็กเกจใหม่):', `${fmt(selected.newInterest)} บาท`);
+  y = drawKV(page, fonts, MARGIN, y, 'ดอกเบี้ย 36 เดือน (ปัจจุบัน):', `${fmt(calculation.current.totalInterest)} บาท`);
+  y = drawKV(page, fonts, MARGIN, y, 'ดอกเบี้ย 36 เดือน (แพ็กเกจใหม่):', `${fmt(selected.newInterest)} บาท`);
   y = drawKV(page, fonts, MARGIN, y, 'ประหยัดดอกเบี้ยรวม:', `${fmt(selected.grossSavings)} บาท`, { valueColor: C.emerald });
 
   // Fee breakdown (one line per fee, strikethrough waived ones shown as " waived")
@@ -166,7 +169,7 @@ function drawCoverSheet(page, fonts, { applicantName, occupationLabel, monthlyIn
   // Net savings highlight box
   const netBoxY = y - 4;
   page.drawRectangle({ x: MARGIN, y: netBoxY - 40, width: CONTENT_W, height: 40, color: C.indigoLight });
-  page.drawText(`ประหยัดสุทธิ 3 ปี: ${fmt(selected.netSavings)} บาท`, {
+  page.drawText(`ประหยัดสุทธิ 36 เดือน: ${fmt(selected.netSavings)} บาท`, {
     x: MARGIN + 14, y: netBoxY - 20, size: 14, font: fonts.bold, color: C.indigoDark
   });
   page.drawText(`จุดคุ้มทุน (Break-even): ประมาณ ${selected.breakEvenMonths === Infinity ? 'ไม่คุ้มทุน' : `${selected.breakEvenMonths} เดือน`}`, {
@@ -290,6 +293,7 @@ export async function buildRefinancePdf({
   occupationLabel = '',
   monthlyIncome = 0,
   wantMRTA = false,
+  remainingMonths = null,
   calculation,
   selected,
   checklist = []
@@ -303,7 +307,7 @@ export async function buildRefinancePdf({
 
   // Page 1 — Cover sheet
   const page1 = pdfDoc.addPage([PAGE_W, PAGE_H]);
-  drawCoverSheet(page1, fonts, { applicantName, occupationLabel, monthlyIncome, wantMRTA, calculation, selected, dateStr });
+  drawCoverSheet(page1, fonts, { applicantName, occupationLabel, monthlyIncome, wantMRTA, remainingMonths, calculation, selected, dateStr });
 
   // Page 2 — Walk-in checklist
   const page2 = pdfDoc.addPage([PAGE_W, PAGE_H]);

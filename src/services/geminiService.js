@@ -340,9 +340,120 @@ export async function batchExtractDebtData(files, options = {}) {
   return results;
 }
 
+/**
+ * Extract Refinance Interest Rate Promotion details from a banner image using Gemini Vision Model
+ * @param {File|Blob} imageFile - Banner image file
+ * @param {object} options - Processing options
+ * @returns {Promise<object>} Extracted promotion JSON data
+ */
+export async function extractRefinancePromoFromImage(imageFile, options = {}) {
+  const { onProgress = () => {} } = options;
+
+  try {
+    onProgress({ stage: 'uploading', status: 'กำลังส่งรูปภาพแบนเนอร์ให้ Gemini Vision...' });
+    const genAI = initializeGeminiClient();
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
+    const imageAsBase64 = await fileToBase64(imageFile);
+
+    const prompt = `
+  คุณคือ AI ผู้เชี่ยวชาญด้านการวิเคราะห์โปรโมชันสินเชื่อบ้านและดอกเบี้ยรีไฟแนนซ์ (Refinance Interest Rate Banner Analyzer)
+  โปรดอ่านและสกัดข้อมูลจากรูปภาพแบนเนอร์โปรโมชันดอกเบี้ยนี้อย่างแม่นยำ แล้วตอบกลับเป็น JSON ภาษาไทยตามโครงสร้างนี้เท่านั้น:
+
+  {
+    "bank_name": "ชื่อธนาคารเต็มภาษาไทย (เช่น ธนาคารกรุงศรีอยุธยา, ธนาคารกสิกรไทย, ธนาคารอาคารสงเคราะห์, ธนาคารไทยพาณิชย์)",
+    "product_name": "ชื่อแพ็กเกจ หรือชื่อโปรโมชันสินเชื่อบ้านรีไฟแนนซ์ที่ปรากฏในรูป",
+    "min_income": 15000, // รายได้ขั้นต่ำต่อเดือนที่สมัครได้เป็นตัวเลข (Number) หากไม่ระบุให้ใช้ 0
+    "avg_3yr_rate": 2.99, // อัตราดอกเบี้ยเฉลี่ย 3 ปีแรกเป็นตัวเลขเปอร์เซ็นต์ float (Number) เช่น 2.55 หรือ 2.99
+    "year_1_rate": "อัตราดอกเบี้ยปีแรก เช่น 1.49% หรือ คงที่ 2.20%",
+    "year_2_3_rate": "อัตราดอกเบี้ยปีที่ 2-3 เช่น 2.20% หรือ MRR-2.15%",
+    "after_year_3_rate": "อัตราดอกเบี้ยลอยตัวหลังจากปีที่ 3 เช่น MRR-1.50%",
+    "is_mrta": true, // boolean (true หากมีเงื่อนไขทำประกัน MRTA / MLTA หรือ false หากไม่มี)
+    "is_free_mortgage_fee": true, // boolean (true หากมีโปรโมชันฟรีค่าจดจำนอง 1% หรือ false หากไม่มี)
+    "bank_ref_link": "URL เว็บไซต์ธนาคารที่ระบุในแบนเนอร์ (ถ้ามี หากไม่มีให้ระบุ null หรือ string ว่าง)"
+  }
+`;
+
+    onProgress({ stage: 'processing', status: 'Gemini Vision กำลังวิเคราะห์ดอกเบี้ยและเงื่อนไขโปรโมชัน...' });
+    const result = await model.generateContent([
+      prompt,
+      {
+        inlineData: {
+          data: imageAsBase64,
+          mimeType: imageFile.type || 'image/jpeg'
+        }
+      }
+    ]);
+
+    const response = await result.response;
+    const text = response.text();
+
+    onProgress({ stage: 'parsing', status: 'แปลงผลลัพธ์เป็นโครงสร้างข้อมูล...' });
+
+    const parsedData = parseGeminiResponse(text);
+
+    // Normalize and validate
+    const normalized = {
+      bank_name: parsedData.bank_name || 'ไม่ระบุธนาคาร',
+      product_name: parsedData.product_name || 'โปรโมชันสินเชื่อบ้านรีไฟแนนซ์',
+      min_income: Number(parsedData.min_income) || 0,
+      avg_3yr_rate: Number(parsedData.avg_3yr_rate) || 0,
+      year_1_rate: parsedData.year_1_rate || '',
+      year_2_3_rate: parsedData.year_2_3_rate || '',
+      after_year_3_rate: parsedData.after_year_3_rate || '',
+      is_mrta: Boolean(parsedData.is_mrta),
+      is_free_mortgage_fee: Boolean(parsedData.is_free_mortgage_fee),
+      bank_ref_link: parsedData.bank_ref_link && parsedData.bank_ref_link !== 'null' ? parsedData.bank_ref_link : ''
+    };
+
+    onProgress({ stage: 'completed', status: 'วิเคราะห์โปรโมชันสำเร็จ' });
+    return normalized;
+
+  } catch (error) {
+    console.error('Refinance Vision Extraction Failed:', error);
+    throw new Error(`Gemini Vision Extraction Error: ${error.message}`);
+  }
+}
+
+/**
+ * Extract multiple Refinance Interest Rate Promotions in batch
+ * @param {File[]|Blob[]} imageFiles - Array of banner images
+ * @param {object} options - Processing options
+ * @returns {Promise<Array>} Array of extracted objects
+ */
+export async function batchExtractRefinancePromos(imageFiles, options = {}) {
+  const results = [];
+  const total = imageFiles.length;
+
+  for (let i = 0; i < total; i++) {
+    const file = imageFiles[i];
+    try {
+      const extracted = await extractRefinancePromoFromImage(file, {
+        ...options,
+        onProgress: (p) => {
+          options.onProgress?.({
+            ...p,
+            index: i,
+            total,
+            status: `[${i + 1}/${total}] ${p.status}`
+          });
+        }
+      });
+      results.push({ file, extracted, success: true });
+    } catch (error) {
+      console.error(`Batch item ${i} failed:`, error);
+      results.push({ file, error: error.message, success: false });
+    }
+  }
+
+  return results;
+}
+
 export default {
   extractDebtDataFromImage,
   batchExtractDebtData,
+  extractRefinancePromoFromImage,
+  batchExtractRefinancePromos,
   DEBT_CATEGORIES,
   DEBT_SCHEMA
 };

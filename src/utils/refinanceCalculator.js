@@ -121,10 +121,11 @@ export function calculateRefinanceSavings({
   occupation,
   wantMRTA = false,
   termYears = 3,
+  termMonths = null,
   packages = RATE_MATRIX.packages
 }) {
   const B = Number(currentBalance) || 0;
-  const months = Math.max(1, Math.round(Number(termYears) * 12));
+  const months = termMonths ? Number(termMonths) : Math.max(1, Math.round(Number(termYears) * 12));
 
   // Current bank baseline
   const currentMonthly = monthlyPayment(B, currentRate, months);

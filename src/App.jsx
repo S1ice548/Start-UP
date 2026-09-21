@@ -8,7 +8,7 @@ import MobileHome from './components/MobileHome';
 import DebtCalculator from './components/DebtCalculator';
 import OcrScanner from './components/OcrScanner';
 import AiAssistant from './components/AiAssistant';
-import Dashboard from './components/Dashboard';
+import AdminDashboard from './components/AdminDashboard';
 import NotificationCenter from './components/NotificationCenter';
 
 // Dedicated Pages
@@ -81,6 +81,10 @@ function AppContent({ isAdmin, user, onLogout }) {
   React.useEffect(() => {
     if (!user) return;
 
+    if (isAdmin && selectedUserId === 'user1' && user.id === 'admin') {
+      setSelectedUserId('all');
+    }
+
     const nextUserId = isAdmin ? (selectedUserId || 'all') : user.id;
     const nextData = getViewDataForUser(user.id, nextUserId);
 
@@ -91,11 +95,7 @@ function AppContent({ isAdmin, user, onLogout }) {
     setSavedPlans(nextData.savedPlans || []);
     setManualStrategy(nextData.strategy || null);
 
-    if (isAdmin && nextUserId === 'all') {
-      setActiveTab('admin');
-    } else if (isAdmin && nextUserId !== 'all' && activeTab === 'admin') {
-      setActiveTab('calculator');
-    } else if (!isAdmin && activeTab === 'admin') {
+    if (!isAdmin && activeTab === 'admin') {
       setActiveTab('calculator');
     }
   }, [user, isAdmin, selectedUserId]);
@@ -328,7 +328,7 @@ function AppContent({ isAdmin, user, onLogout }) {
 
           {/* Page 5: Backend Admin Dashboard */}
           {activeTab === 'admin' && isAdmin && (
-            <Dashboard
+            <AdminDashboard
               onRefreshView={() => setViewData(getViewDataForUser(user.id, selectedUserId))}
               showToast={showToast}
             />

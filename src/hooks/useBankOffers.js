@@ -2,9 +2,17 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import INITIAL_OFFERS from '../data/bankOffers.json';
 import INITIAL_MATRIX from '../data/refinanceRates.json';
 import { fetchLiveBankRates, getBaselineBankRates } from '../utils/bankRateFetcher';
+import { fetchAdminPromotions, mergeOffers, mergeRateMatrix } from '../utils/promotionSync';
 
 /**
  * Custom hook for managing and synchronizing dynamic bank promotional offers.
+ *
+ * Data priority (highest first):
+ *   1. Admin-managed promotions from the backend DB (/api/admin/promotions)
+ *      — always fetched fresh, so admin updates appear immediately.
+ *   2. Live bank rates scraped via CORS proxy (when reachable).
+ *   3. Bundled baseline data (refinanceRates.json / bankOffers.json).
+ *
  * Connects with CORS Proxy live rate fetcher with seamless local fallback.
  */
 export function useBankOffers() {
@@ -16,24 +24,31 @@ export function useBankOffers() {
   const [isFetching, setIsFetching] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState('');
 
-  // Fetch / Sync live bank rates
+  // Fetch / Sync rates: live web scrape + admin DB promotions merged on top.
   const refreshRates = useCallback(async (force = false) => {
     setIsFetching(true);
     try {
       const data = await fetchLiveBankRates(force);
-      if (data.offers && data.offers.length > 0) {
-        const sorted = [...data.offers].sort((a, b) => Number(a.avg3YearRate) - Number(b.avg3YearRate));
-        setOffers(sorted);
-      }
-      if (data.rateMatrix) {
-        setRateMatrix(data.rateMatrix);
-      }
+      // Admin promotions are always fetched fresh (never cached) so the
+      // public website shows the latest admin save immediately.
+      const adminPromos = await fetchAdminPromotions();
+
+      const liveOffers = data.offers?.length > 0
+        ? [...data.offers].sort((a, b) => Number(a.avg3YearRate) - Number(b.avg3YearRate))
+        : getBaselineBankRates().offers;
+      const liveMatrix = data.rateMatrix || getBaselineBankRates().rateMatrix;
+
+      setOffers(mergeOffers(adminPromos, liveOffers));
+      setRateMatrix(mergeRateMatrix(adminPromos, liveMatrix));
+
       setIsLive(!!data.isLive);
       setLastSyncedAt(data.fetchedAt || '');
     } catch (err) {
+      // Offline fallback: baseline + admin promotions
       const baseline = getBaselineBankRates();
-      setOffers(baseline.offers);
-      setRateMatrix(baseline.rateMatrix);
+      const adminPromos = await fetchAdminPromotions();
+      setOffers(mergeOffers(adminPromos, baseline.offers));
+      setRateMatrix(mergeRateMatrix(adminPromos, baseline.rateMatrix));
       setIsLive(false);
     } finally {
       setIsFetching(false);

@@ -18,6 +18,7 @@
 - [x] หน้าแรก: เอางบโปะหนี้เพิ่มออก เปลี่ยนเป็นช่องกรอกจำนวนเงินโปะและปุ่มนำทางไปหน้าบันทึกชำระหนี้โดยตรง
 - [x] หน้าบันทึก: ไฮไลท์หนี้เป้าหมายอันดับ 1 (Focus Target) ตามแผน AI พร้อมเลือกลงฟอร์มบันทึกให้อัตโนมัติ
 - [x] เพิ่มฟีเจอร์ Export ข้อมูลส่วนตัว (Debt & Payment History) ไปยังไฟล์ Excel
+- [x] สร้างระบบ "เพิ่ม/วิเคราะห์รูปภาพแบนเนอร์โปรโมชัน" ให้สมบูรณ์แบบ End-to-End: (1) Backend API จริง `server/index.js` (zero-dependency Node + ESM) — CRUD `/api/admin/promotions` (upsert ตาม id, validation 400, DELETE 404) เก็บใน JSON-file DB `server/data/promotions.json` (atomic write + auto-seed), endpoint `/api/admin/promotions/analyze` เรียก **Gemini Vision ฝั่ง server** (`gemini-3.6-flash`, responseMimeType JSON, retry 429/5xx แบบ backoff, timeout 90s) เพื่อไม่ให้ API key โดน expose ให้ user + serve `dist/` สำหรับ deploy process เดียว, (2) `npm run server` / `npm run dev:all` (spawn 2 processes แบบ cross-platform ผ่าน `scripts/devAll.js`) และ Vite proxy `/api` → localhost:8787, (3) Frontend `geminiService.js` ยิงรูปผ่าน Backend ก่อนเสมอ (fallback client-side Gemini เมื่อ backend ไม่ขึ้น) รองรับ File/Blob/data URL/http URL, (4) Data Binding: ผลวิเคราะห์ AI เติมฟอร์มแอดมินอัตโนมัติทุก field (`applyExtractedToForm` เช็ค null/0 ชัดเจน + `normalizeBankName` แม็ปชื่อธนาคาร AI → รายชื่อไทยมาตรฐาน), (5) **หน้าเว็บสาธารณะดึงข้อมูลแอดมินแล้ว**: `promotionSync.js` แปลงโปรโมชันแอดมิน → offers/packages แล้ว `useBankOffers` merge ทับ baseline ทุกครั้งที่โหลด/กด "ดึงข้อมูลสด" — user ทุกคนเห็นอัตราดอกเบี้ยล่าสุดจากแอดมินทันที พร้อมแสดงรูปแบนเนอร์ + ลิงก์เว็บธนาคารบนการ์ดแพ็กเกจ (ทดสอบจริง: วิเคราะห์แบนเนอร์กรุงศรี 2.55% ได้ JSON ครบทุก field)
 
 
 ## 🛠️ 2. รายการปรับแก้ / UI & Bug Fixes (Modifications)
@@ -51,6 +52,7 @@
 - [x] พัฒนามอดูลรวบหนี้บ้าน (Debt Consolidation Module) — เพิ่ม `consolidationEngine.js`, `ConsolidationModule.jsx`, เมนู 'รวบหนี้บ้าน' ใน Header, เปรียบเทียบภาพก่อน/หลังรวบหนี้, ตรายาง 'PAID OFF (ปิดยอด 0 บาท)' และปุ่มดาวน์โหลด PDF Pack
 - [x] เปลี่ยนชื่อเมนู รีไฟแนนซ์บ้าน --> รีไฟแนนซ์ // รวบหนี้บ้าน ---> รวมหนี้ — ปรับชื่อใน `NAV_ITEMS` และ `TAB_TITLES` ของ `Header.jsx`
 - [x] หน้ารวมหนี้เปิดแล้วเป็น page ขาว เปล่าๆ — แก้ไขบั๊ก `ReferenceError: homePayment is not defined` ใน `ConsolidationModule.jsx` ให้เป็น `homeLoanPayment` ตามตัวแปร state ทำให้หน้ารวมหนี้แสดงผลได้สมบูรณ์
+- [x] แก้ระบบโปรโมชันรีไฟแนนซ์ข้อมูลขาดหาย 3 จุด: (1) `/api/admin/promotions` ไม่มี Backend จริง (ทุก save ตกไป localStorage เงียบ ๆ) + `getPromotions` เช็ค `.length > 0` ทำให้ DB ที่ถูกลบจนว่างกลับไปใช้ข้อมูลเก่า, (2) Gemini Vision เรียก client-side ด้วย key เสี่ยงโดนขโมย + โมเดล `gemini-1.5-flash`/`gemini-2.0-flash` ถูกปลดระวีงแล้ว (ย้ายไป server-side + อัปเดตเป็น `gemini-3.6-flash`), (3) `/analyze` บั๊กอ่านฟิลด์ `base64` แทนที่จะเป็น `image_base64` ที่ frontend ส่งมา (จับได้จาก integration test `server/index.test.js`) — พร้อมแก้ `applyExtractedToForm` ใช้ `||` ทำให้ค่า 0 จาก AI ไม่เติมลงฟอร์ม และ localStorage quota overflow เมื่อเก็บรูป base64
 ---
 
 

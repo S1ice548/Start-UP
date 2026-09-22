@@ -60,11 +60,14 @@ export const INITIAL_PROMOTIONS = [
  */
 export async function getPromotions() {
   try {
-    // Try fetching from API endpoint if available
+    // Try fetching from API endpoint if available.
+    // NOTE: trust the API whenever the response is OK, even if the list is
+    // empty (admin may have deleted every promotion) — only fall back to the
+    // stale localStorage copy when the backend is unreachable.
     const response = await fetch('/api/admin/promotions');
     if (response.ok) {
       const data = await response.json();
-      if (Array.isArray(data.promotions) && data.promotions.length > 0) {
+      if (Array.isArray(data.promotions)) {
         return data.promotions;
       }
     }
@@ -121,16 +124,20 @@ export async function savePromotion(promo) {
     // Fallback to local storage
   }
 
-  // Local storage save
-  const current = await getPromotions();
-  let updatedList;
-  if (isEdit) {
-    updatedList = current.map(p => p.id === updatedPromo.id ? updatedPromo : p);
-  } else {
-    updatedList = [updatedPromo, ...current];
+  // Local storage save (guarded — large base64 banner images can exceed the quota)
+  try {
+    const current = await getPromotions();
+    let updatedList;
+    if (isEdit) {
+      updatedList = current.map(p => p.id === updatedPromo.id ? updatedPromo : p);
+    } else {
+      updatedList = [updatedPromo, ...current];
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
+  } catch (e) {
+    console.warn('Failed to persist promotions to localStorage (quota?):', e);
   }
 
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
   return updatedPromo;
 }
 
@@ -151,9 +158,13 @@ export async function deletePromotion(id) {
     // Fallback to local storage
   }
 
-  const current = await getPromotions();
-  const updatedList = current.filter(p => p.id !== id);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
+  try {
+    const current = await getPromotions();
+    const updatedList = current.filter(p => p.id !== id);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedList));
+  } catch (e) {
+    console.warn('Failed to update localStorage promotions after delete:', e);
+  }
   return true;
 }
 

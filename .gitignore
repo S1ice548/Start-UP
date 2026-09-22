@@ -6,6 +6,9 @@ vite-dev-error.log
 .env.*
 !.env.example
 
+# Backend: runtime data (do not commit DB contents)
+server/data/
+
 # AI tool local config (may contain API keys)
 .claude/
 .codex/

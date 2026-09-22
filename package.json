@@ -8,6 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "server": "node server/index.js",
+    "dev:all": "node scripts/devAll.js",
     "update-rates": "node scripts/updateBankRates.js"
   },
   "dependencies": {

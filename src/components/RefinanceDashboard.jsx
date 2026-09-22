@@ -407,6 +407,11 @@ export default function RefinanceDashboard({ userName = 'User', onBack, onNaviga
                         <div className="flex items-center gap-2">
                           <BankLogo bankShort={r.bankShort} logoUrl={r.package.logoUrl} size={34} />
                           <span className="text-sm font-black text-slate-900">{r.bank}</span>
+                          {r.package.promoImageUrl && (
+                            <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 border border-indigo-200">
+                              แบนเนอร์โปรโมชัน
+                            </span>
+                          )}
                         </div>
                         <p className="text-[11px] text-slate-500 font-medium mt-0.5">{r.packageTitle}</p>
                       </div>
@@ -438,12 +443,32 @@ export default function RefinanceDashboard({ userName = 'User', onBack, onNaviga
                       </div>
                     </div>
 
+                    {r.package.promoImageUrl && (
+                      <img
+                        src={r.package.promoImageUrl}
+                        alt={`แบนเนอร์โปรโมชัน ${r.bank}`}
+                        className="mt-3 w-full max-h-28 object-contain rounded-lg border border-slate-200 bg-slate-50"
+                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                      />
+                    )}
+
                     <div className="mt-3 text-[11px] text-slate-500 font-medium space-y-1">
                       <div>ค่าธรรมเนียมรวม: <strong className={r.fees.total > 0 ? 'text-rose-600' : 'text-emerald-600'}>{formatBaht(r.fees.total)}</strong></div>
                       {r.fees.breakdown.filter(f => f.waived).length > 0 && (
                         <div className="text-emerald-700 font-bold">
                           🎁 {r.fees.breakdown.filter(f => f.waived).map(f => f.label.replace(' (1%)', '')).join(' + ')} ฟรี!
                         </div>
+                      )}
+                      {r.package.bankRefLink && (
+                        <a
+                          href={r.package.bankRefLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-indigo-600 hover:text-indigo-800 font-bold underline inline-flex items-center gap-1"
+                        >
+                          เว็บไซต์ธนาคาร <ArrowRight className="w-3 h-3" />
+                        </a>
                       )}
                     </div>
                   </button>

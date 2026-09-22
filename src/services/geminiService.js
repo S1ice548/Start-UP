@@ -32,6 +32,51 @@ export const DEBT_SCHEMA = {
   required: ['issuerName', 'debtCategory', 'totalBalance', 'minimumPayment', 'dueDate', 'interestRate']
 };
 
+// Canonical Thai bank list used by the Admin refinance promotion form
+export const THAI_BANKS = [
+  'ธนาคารกรุงศรีอยุธยา',
+  'ธนาคารกสิกรไทย',
+  'ธนาคารไทยพาณิชย์',
+  'ธนาคารอาคารสงเคราะห์',
+  'ธนาคารออมสิน',
+  'ธนาคารทหารไทยธนชาต',
+  'ธนาคารซีไอเอ็มบี ไทย',
+  'ธนาคารกรุงเทพ',
+  'ธนาคารกรุงไทย',
+  'ธนาคารยูโอบี'
+];
+
+// Fuzzy aliases (Thai short names + English brand names) -> canonical Thai bank name
+const THAI_BANK_ALIASES = [
+  { canonical: 'ธนาคารกรุงศรีอยุธยา', keys: ['กรุงศรี', 'krungsri', 'krung sri', 'ayudhya'] },
+  { canonical: 'ธนาคารกสิกรไทย', keys: ['กสิกร', 'kbank', 'kasikorn'] },
+  { canonical: 'ธนาคารไทยพาณิชย์', keys: ['ไทยพาณิชย์', 'scb'] },
+  { canonical: 'ธนาคารอาคารสงเคราะห์', keys: ['อาคารสงเคราะห์', 'ธอส', 'ghbank', 'gh bank', 'ghb'] },
+  { canonical: 'ธนาคารออมสิน', keys: ['ออมสิน', 'gsb'] },
+  { canonical: 'ธนาคารทหารไทยธนชาต', keys: ['ทหารไทย', 'ธนชาต', 'ttb', 'tmb'] },
+  { canonical: 'ธนาคารซีไอเอ็มบี ไทย', keys: ['ซีไอเอ็มบี', 'cimb'] },
+  { canonical: 'ธนาคารกรุงเทพ', keys: ['กรุงเทพ', 'bangkok bank', 'bbl'] },
+  { canonical: 'ธนาคารกรุงไทย', keys: ['กรุงไทย', 'krungthai', 'krung thai', 'ktb'] },
+  { canonical: 'ธนาคารยูโอบี', keys: ['ยูโอบี', 'uob'] }
+];
+
+/**
+ * Normalize a bank name returned by Gemini Vision into the canonical Thai bank
+ * name used across the app (falls back to the raw value when unknown).
+ * @param {string} rawName
+ * @returns {string}
+ */
+export function normalizeBankName(rawName) {
+  if (!rawName || typeof rawName !== 'string') return '';
+  const cleaned = rawName.trim().replace(/\s+/g, ' ');
+  if (THAI_BANKS.includes(cleaned)) return cleaned;
+  const lower = cleaned.toLowerCase();
+  for (const entry of THAI_BANK_ALIASES) {
+    if (entry.keys.some(key => lower.includes(key))) return entry.canonical;
+  }
+  return cleaned;
+}
+
 // Initialize Gemini AI client
 const initializeGeminiClient = () => {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
@@ -59,10 +104,13 @@ export async function extractDebtDataFromImage(imageFile, options = {}) {
   try {
     // Initialize Gemini client
     const genAI = initializeGeminiClient();
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-1.5-flash',
+      generationConfig: { responseMimeType: 'application/json', temperature: 0.1 }
+    });
 
-    // Convert image to base64
-    const imageAsBase64 = await fileToBase64(imageFile);
+    // Convert image to base64 (supports File/Blob, data URL and http(s) URL)
+    const { base64: imageAsBase64, mimeType: imageMimeType } = await resolveImageParts(imageFile);
 
     // Build extraction prompt
     const prompt = buildExtractionPrompt();
@@ -74,7 +122,7 @@ export async function extractDebtDataFromImage(imageFile, options = {}) {
       {
         inlineData: {
           data: imageAsBase64,
-          mimeType: imageFile.type || 'image/jpeg'
+          mimeType: imageMimeType
         }
       }
     ]);
@@ -287,11 +335,11 @@ async function fallbackToTesseractOCR(imageFile, options = {}) {
 }
 
 /**
- * Convert File/Blob to base64 for Gemini API
- * @param {File|Blob} file - File to convert
- * @returns {Promise<string>} Base64 encoded data
+ * Read a Blob/File as a base64 string via FileReader.
+ * @param {Blob|File} blob
+ * @returns {Promise<string>} Base64 encoded data (without data URL prefix)
  */
-function fileToBase64(file) {
+function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -301,8 +349,54 @@ function fileToBase64(file) {
       resolve(base64);
     };
     reader.onerror = (error) => reject(error);
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(blob);
   });
+}
+
+/**
+ * Resolve any supported image input into { base64, mimeType } for the Gemini API.
+ * Supported inputs: File, Blob, base64 data URL string (e.g. clipboard/snipping
+ * tool previews) and http(s) image URLs.
+ * @param {File|Blob|string} imageFile
+ * @returns {Promise<{ base64: string, mimeType: string }>}
+ */
+async function resolveImageParts(imageFile) {
+  // Case 1: base64 data URL string (FileReader preview from the Admin upload queue)
+  if (typeof imageFile === 'string' && imageFile.startsWith('data:')) {
+    const match = imageFile.match(/^data:([^;,]+)[^,]*,(.*)$/);
+    if (!match) {
+      throw new Error('Invalid image data URL');
+    }
+    return { base64: match[2], mimeType: match[1] || 'image/jpeg' };
+  }
+
+  // Case 2: remote image URL — fetch it and convert to base64
+  if (typeof imageFile === 'string' && /^https?:\/\//i.test(imageFile)) {
+    const res = await fetch(imageFile);
+    if (!res.ok) {
+      throw new Error(`Cannot download image from URL (HTTP ${res.status})`);
+    }
+    const blob = await res.blob();
+    return { base64: await blobToBase64(blob), mimeType: blob.type || 'image/jpeg' };
+  }
+
+  // Case 3: File / Blob
+  if (!imageFile) {
+    throw new Error('No image provided for Gemini Vision analysis');
+  }
+  return {
+    base64: await blobToBase64(imageFile),
+    mimeType: imageFile.type || 'image/jpeg'
+  };
+}
+
+/**
+ * Convert File/Blob to base64 for Gemini API
+ * @param {File|Blob} file - File to convert
+ * @returns {Promise<string>} Base64 encoded data
+ */
+function fileToBase64(file) {
+  return blobToBase64(file);
 }
 
 /**
@@ -346,15 +440,67 @@ export async function batchExtractDebtData(files, options = {}) {
  * @param {object} options - Processing options
  * @returns {Promise<object>} Extracted promotion JSON data
  */
+/**
+ * Normalize a raw Gemini Vision promo response into the app's promo schema.
+ * @param {object} parsedData - Raw parsed JSON from Gemini (or backend)
+ * @returns {object} Normalized promotion object
+ */
+function normalizePromoData(parsedData) {
+  const str = (v) => (v && v !== 'null' ? String(v).trim() : '');
+  return {
+    bank_name: str(parsedData.bank_name) || 'ไม่ระบุธนาคาร',
+    product_name: str(parsedData.product_name) || 'โปรโมชันสินเชื่อบ้านรีไฟแนนซ์',
+    min_income: Number(parsedData.min_income) || 0,
+    avg_3yr_rate: Number(parsedData.avg_3yr_rate) || 0,
+    year_1_rate: str(parsedData.year_1_rate),
+    year_2_3_rate: str(parsedData.year_2_3_rate),
+    after_year_3_rate: str(parsedData.after_year_3_rate),
+    is_mrta: Boolean(parsedData.is_mrta),
+    is_free_mortgage_fee: Boolean(parsedData.is_free_mortgage_fee),
+    bank_ref_link: str(parsedData.bank_ref_link)
+  };
+}
+
 export async function extractRefinancePromoFromImage(imageFile, options = {}) {
   const { onProgress = () => {} } = options;
 
+  // Resolve any supported input (File / Blob / data URL / http URL) into base64 parts
+  const imageParts = await resolveImageParts(imageFile);
+
+  // ---- Path 1: Backend API (server-side Gemini key, shared for every user) ----
+  try {
+    onProgress({ stage: 'uploading', status: 'กำลังส่งรูปภาพแบนเนอร์ไปยัง Backend API...' });
+    const res = await fetch('/api/admin/promotions/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image_base64: `data:${imageParts.mimeType};base64,${imageParts.base64}`
+      })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.ok && data?.promotion) {
+        onProgress({ stage: 'parsing', status: 'แปลงผลลัพธ์เป็นโครงสร้างข้อมูล...' });
+        onProgress({ stage: 'completed', status: 'วิเคราะห์โปรโมชันสำเร็จ (Backend Gemini Vision)' });
+        return normalizePromoData(data.promotion);
+      }
+      throw new Error(data?.error || 'Backend analysis failed');
+    }
+  } catch (backendErr) {
+    console.warn('Backend Gemini Vision unavailable, falling back to client-side Gemini:', backendErr.message);
+  }
+
+  // ---- Path 2 (fallback): direct client-side Gemini call (client-only / dev mode) ----
   try {
     onProgress({ stage: 'uploading', status: 'กำลังส่งรูปภาพแบนเนอร์ให้ Gemini Vision...' });
     const genAI = initializeGeminiClient();
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    // gemini-1.5-flash was retired (Sept 2026) — use the current flash model.
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-3.6-flash',
+      generationConfig: { responseMimeType: 'application/json', temperature: 0.1 }
+    });
 
-    const imageAsBase64 = await fileToBase64(imageFile);
+    const imageAsBase64 = imageParts.base64;
 
     const prompt = `
   คุณคือ AI ผู้เชี่ยวชาญด้านการวิเคราะห์โปรโมชันสินเชื่อบ้านและดอกเบี้ยรีไฟแนนซ์ (Refinance Interest Rate Banner Analyzer)
@@ -380,7 +526,7 @@ export async function extractRefinancePromoFromImage(imageFile, options = {}) {
       {
         inlineData: {
           data: imageAsBase64,
-          mimeType: imageFile.type || 'image/jpeg'
+          mimeType: imageParts.mimeType
         }
       }
     ]);
@@ -393,18 +539,7 @@ export async function extractRefinancePromoFromImage(imageFile, options = {}) {
     const parsedData = parseGeminiResponse(text);
 
     // Normalize and validate
-    const normalized = {
-      bank_name: parsedData.bank_name || 'ไม่ระบุธนาคาร',
-      product_name: parsedData.product_name || 'โปรโมชันสินเชื่อบ้านรีไฟแนนซ์',
-      min_income: Number(parsedData.min_income) || 0,
-      avg_3yr_rate: Number(parsedData.avg_3yr_rate) || 0,
-      year_1_rate: parsedData.year_1_rate || '',
-      year_2_3_rate: parsedData.year_2_3_rate || '',
-      after_year_3_rate: parsedData.after_year_3_rate || '',
-      is_mrta: Boolean(parsedData.is_mrta),
-      is_free_mortgage_fee: Boolean(parsedData.is_free_mortgage_fee),
-      bank_ref_link: parsedData.bank_ref_link && parsedData.bank_ref_link !== 'null' ? parsedData.bank_ref_link : ''
-    };
+    const normalized = normalizePromoData(parsedData);
 
     onProgress({ stage: 'completed', status: 'วิเคราะห์โปรโมชันสำเร็จ' });
     return normalized;

@@ -33,7 +33,7 @@ import {
 import { INITIAL_ADMIN_DATA, MOCK_USERS, loadUserDataFromStorage, saveUserDataToStorage } from '../data/mockData';
 import { formatCurrency } from '../utils/debtEngine';
 import { exportAdminAllUsersPaymentLogsToExcel } from '../utils/excelExport';
-import { extractRefinancePromoFromImage, batchExtractRefinancePromos } from '../services/geminiService';
+import { extractRefinancePromoFromImage, batchExtractRefinancePromos, normalizeBankName } from '../services/geminiService';
 import { getPromotions, savePromotion, deletePromotion } from '../services/refinancePromotionService';
 
 const THAI_BANKS = [
@@ -259,19 +259,26 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
     }
   };
 
-  // Apply Extracted Data to Form
+  // Apply Extracted Data to Form (data binding from Gemini Vision JSON -> form inputs)
   const applyExtractedToForm = (extracted, previewUrl, refLink) => {
+    if (!extracted) return;
     setPromoForm(prev => ({
       ...prev,
-      bank_name: extracted.bank_name || prev.bank_name,
+      // Normalize AI bank name (e.g. "Krungsri" / "กรุงศรี") to the canonical Thai bank list
+      bank_name: normalizeBankName(extracted.bank_name) || prev.bank_name,
       product_name: extracted.product_name || prev.product_name,
-      min_income: extracted.min_income || prev.min_income,
-      avg_3yr_rate: extracted.avg_3yr_rate || prev.avg_3yr_rate,
+      // Use explicit null/undefined checks so AI values of 0 still overwrite the form
+      min_income: (extracted.min_income !== undefined && extracted.min_income !== null)
+        ? (Number(extracted.min_income) || 0)
+        : prev.min_income,
+      avg_3yr_rate: (extracted.avg_3yr_rate !== undefined && extracted.avg_3yr_rate !== null)
+        ? (Number(extracted.avg_3yr_rate) || 0)
+        : prev.avg_3yr_rate,
       year_1_rate: extracted.year_1_rate || prev.year_1_rate,
       year_2_3_rate: extracted.year_2_3_rate || prev.year_2_3_rate,
       after_year_3_rate: extracted.after_year_3_rate || prev.after_year_3_rate,
-      is_mrta: extracted.is_mrta !== undefined ? extracted.is_mrta : prev.is_mrta,
-      is_free_mortgage_fee: extracted.is_free_mortgage_fee !== undefined ? extracted.is_free_mortgage_fee : prev.is_free_mortgage_fee,
+      is_mrta: extracted.is_mrta !== undefined ? Boolean(extracted.is_mrta) : prev.is_mrta,
+      is_free_mortgage_fee: extracted.is_free_mortgage_fee !== undefined ? Boolean(extracted.is_free_mortgage_fee) : prev.is_free_mortgage_fee,
       promo_image_url: previewUrl || prev.promo_image_url,
       bank_ref_link: refLink || extracted.bank_ref_link || prev.bank_ref_link
     }));
@@ -882,6 +889,9 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
                     {THAI_BANKS.map(bank => (
                       <option key={bank} value={bank}>{bank}</option>
                     ))}
+                    {!THAI_BANKS.includes(promoForm.bank_name) && (
+                      <option value={promoForm.bank_name}>{promoForm.bank_name} (จาก AI)</option>
+                    )}
                   </select>
                 </div>
 

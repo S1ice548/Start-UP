@@ -5,7 +5,7 @@
  * avg_3yr_rate, promo_image_url, bank_ref_link, ...) into the backend DB.
  * This module converts those records into the two shapes the public
  * Refinance module consumes:
- *   1. `offers`      — used by useBankOffers / getEligibleOffers / ConsolidationModule
+ *   1. `offers`      — used by useBankOffers / getEligibleOffers
  *   2. `packages`    — used by refinanceCalculator via rateMatrix.packages
  * and merges them on top of the bundled baseline data, so every visitor of
  * the public website instantly sees the latest admin-updated rates.
@@ -41,7 +41,7 @@ const ALL_OCCUPATIONS = ['salaried', 'government', 'freelance', 'business', 'pen
 /**
  * Convert one admin promotion record into the public `offer` shape.
  * @param {object} promo - Admin promotion record
- * @returns {object} Offer shaped for useBankOffers / ConsolidationModule
+ * @returns {object} Offer shaped for useBankOffers
  */
 export function promoToOffer(promo) {
   return {
@@ -100,6 +100,11 @@ export function promoToPackage(promo, baselinePackages = []) {
     packageTitle: promo.product_name + (rate ? ` (ดอกเบี้ยเฉลี่ย 3 ปี ${rate}%)` : ''),
     rate3YAvg: rate,
     minIncome: Number(promo.min_income) || 0,
+    // Loan-tier gate (e.g. 3000000 for ">=3M" banner tables, 0 = any size)
+    minLoanTier: Number(promo.min_loan_tier) || 0,
+    targetLoanAmount: Number(promo.target_loan_amount) || 0,
+    // Variant styles (1-4) with MRTA condition / MRR formula / EIR
+    variants: Array.isArray(promo.variants) ? promo.variants : [],
     allowedOccupations: baseline?.allowedOccupations || [...ALL_OCCUPATIONS],
     fees: baseline?.fees || null, // null -> calculator falls back to matrix defaultFees
     waiverPromos,

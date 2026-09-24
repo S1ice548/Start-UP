@@ -16,7 +16,6 @@ import CompareStrategiesPage from './components/CompareStrategiesPage';
 import AddEditDebtPage from './components/AddEditDebtPage';
 import MilestonesPage from './components/MilestonesPage';
 import PaymentHistoryPage from './components/PaymentHistoryPage';
-import ConsolidationModule from './components/ConsolidationModule';
 import RefinanceDashboard from './components/RefinanceDashboard';
 
 import { INITIAL_DEBTS, getViewDataForUser, saveUserDataToStorage, resetUserDataStorage } from './data/mockData';
@@ -371,21 +370,11 @@ function AppContent({ isAdmin, user, onLogout }) {
             />
           )}
 
-          {/* Dedicated Page 9: Debt Consolidation Module */}
-          {activeTab === 'consolidation' && (
-            <ConsolidationModule
-              debts={debts}
-              userName={user?.name || 'ผู้ใช้งาน'}
-              onNavigateToCalculator={() => setActiveTab('calculator')}
-            />
-          )}
-
-          {/* Dedicated Page 10: Refinance Calculator & Walk-in Document Packager */}
+          {/* Dedicated Page 10: Refinance Calculator & Best-Match Recommendation */}
           {activeTab === 'refinance' && (
             <RefinanceDashboard
               userName={user?.name || 'User'}
               onBack={() => setActiveTab('calculator')}
-              onNavigateToConsolidation={() => setActiveTab('consolidation')}
               ocrDebts={debts}
             />
           )}

@@ -11,6 +11,11 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8787',
         changeOrigin: true
+      },
+      // Serve uploaded promo banner images from the backend (server/data/uploads)
+      '/uploads': {
+        target: 'http://localhost:8787',
+        changeOrigin: true
       }
     }
   },

@@ -15,6 +15,8 @@ import path from 'path';
 const TEST_DB_FILE = path.join(os.tmpdir(), `nee-noi-promotions-test-${process.pid}.json`);
 process.env.PROMOTIONS_DB_FILE = TEST_DB_FILE;
 process.env.GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'test-key-for-vitest';
+const TEST_UPLOADS_DIR = path.join(os.tmpdir(), `nee-noi-uploads-test-${process.pid}`);
+process.env.PROMO_UPLOADS_DIR = TEST_UPLOADS_DIR;
 
 const { default: server, PROMOTION_SEED } = await import('./index.js');
 
@@ -33,8 +35,8 @@ beforeAll(async () => {
 afterAll(async () => {
   // Drop keep-alive sockets so vitest can exit cleanly
   server.closeAllConnections?.();
-  await new Promise((resolve) => server.close(resolve));
-  try { fs.unlinkSync(TEST_DB_FILE); } catch { /* ignore */ }
+  await new Promise((resolve) => server.close(resolve));    try { fs.unlinkSync(TEST_DB_FILE); } catch { /* ignore */ }
+    try { fs.rmSync(TEST_UPLOADS_DIR, { recursive: true, force: true }); } catch { /* ignore */ }
 });
 
 describe('GET /api/health', () => {
@@ -109,6 +111,55 @@ describe('Promotion CRUD', () => {
 
     const list = (await (await fetch(`${baseUrl}/api/admin/promotions`)).json()).promotions;
     expect(list.filter(p => p.id === created.id).length).toBe(1);
+  });
+
+  it('POST normalizes and persists a rate_matrix (schema contract)', async () => {
+    const res = await fetch(`${baseUrl}/api/admin/promotions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bank_name: 'ธนาคารออมสิน',
+        product_name: 'GSB Refi Table',
+        rate_matrix: [
+          {
+            customer_group: 'พนักงานประจำ',
+            min_income: '20,000',            // string -> Number
+            property_types: 'บ้านเดี่ยว, คอนโด', // comma string -> array
+            is_mrta: 'ทำประกันชีวิต',          // Thai cell -> true
+            is_free_mortgage: 'ฟรีค่าจดจำนอง', // Thai cell -> true
+            year_1_rate: '1.49%',
+            year_2_3_rate: '2.49%',
+            avg_3yr_rate: 0                   // 0 -> derived (1.49 + 2.49×2)/3
+          },
+          {
+            customer_group: 'ทุกประเภท',
+            min_income: 15000,
+            is_mrta: 'ไม่ทำ',                 // Thai cell -> false
+            is_free_mortgage: false,
+            year_1_rate: '2.49%',
+            year_2_3_rate: '3.49%'
+          }
+        ]
+      })
+    });
+    expect(res.status).toBe(200);
+    const { promotion } = await res.json();
+    expect(Array.isArray(promotion.rate_matrix)).toBe(true);
+    expect(promotion.rate_matrix).toHaveLength(2);
+
+    const [rowA, rowB] = promotion.rate_matrix;
+    expect(rowA.min_income).toBe(20000);
+    expect(rowA.property_types).toEqual(['บ้านเดี่ยว', 'คอนโด']);
+    expect(rowA.is_mrta).toBe(true);
+    expect(rowA.is_free_mortgage).toBe(true);
+    expect(rowA.fee_waivers).toEqual(['จดจำนอง']);
+    expect(rowA.avg_3yr_rate).toBeCloseTo(2.16, 2);
+    expect(rowA.id).toBeTruthy();
+    expect(rowB.is_mrta).toBe(false);
+
+    // ...and it survives a re-read from the JSON DB
+    const list = (await (await fetch(`${baseUrl}/api/admin/promotions`)).json()).promotions;
+    expect(list.find(p => p.id === promotion.id)?.rate_matrix).toHaveLength(2);
   });
 
   it('POST rejects missing bank_name / product_name with 400', async () => {
@@ -241,6 +292,41 @@ describe('POST /api/admin/promotions/analyze', () => {
     }
   });
 
+  it('accepts the /extract-image alias and returns the same normalized payload', async () => {
+    const geminiJson = JSON.stringify({
+      bank_name: 'Krungsri',
+      product_name: 'Alias Route Test',
+      min_income: 20000,
+      avg_3yr_rate: 2.55
+    });
+    const origFetch = globalThis.fetch;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if (String(url).includes('generativelanguage.googleapis.com')) {
+        return new Response(JSON.stringify({
+          candidates: [{ content: { parts: [{ text: geminiJson }] } }]
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return origFetch(url, init);
+    });
+
+    try {
+      const res = await fetch(`${baseUrl}/api/admin/promotions/extract-image`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_base64: 'aGVsbG8=' })
+      });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.ok).toBe(true);
+      // Bank-name alias mapping (e.g. "Krungsri" -> Thai canonical) is applied
+      // client-side via normalizeBankName; the server only normalizes types.
+      expect(data.promotion.bank_name).toBe('Krungsri');
+      expect(data.promotion.product_name).toBe('Alias Route Test');
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it('returns 502 when Gemini responds with an API error', async () => {
     const origFetch = globalThis.fetch; // capture BEFORE spying
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
@@ -262,5 +348,49 @@ describe('POST /api/admin/promotions/analyze', () => {
       fetchSpy.mockRestore();
       delete fetch.__orig;
     }
+  });
+});
+
+describe('POST /api/admin/promotions/upload-image', () => {
+  it('stores the file in uploads dir and returns a short /uploads/ URL', async () => {
+    // 1x1 transparent PNG
+    const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const res = await fetch(`${baseUrl}/api/admin/promotions/upload-image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_base64: `data:image/png;base64,${PNG_BASE64}` })
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+    expect(data.url).toMatch(/^\/uploads\/promo-[\w-]+\.png$/);
+
+    // File must exist on disk inside the isolated test uploads dir
+    const savedPath = path.join(TEST_UPLOADS_DIR, path.basename(data.url));
+    expect(fs.existsSync(savedPath)).toBe(true);
+    expect(fs.readFileSync(savedPath).toString('base64')).toBe(PNG_BASE64);
+
+    // And must be served back over HTTP with the right content type
+    const imgRes = await fetch(`${baseUrl}${data.url}`);
+    expect(imgRes.status).toBe(200);
+    expect(imgRes.headers.get('content-type')).toBe('image/png');
+  });
+
+  it('rejects an empty payload with 400', async () => {
+    const res = await fetch(`${baseUrl}/api/admin/promotions/upload-image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a malformed data URL with 400', async () => {
+    const res = await fetch(`${baseUrl}/api/admin/promotions/upload-image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_base64: 'data:broken' })
+    });
+    expect(res.status).toBe(400);
   });
 });

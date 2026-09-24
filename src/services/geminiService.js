@@ -1,6 +1,7 @@
 /** Gemini 1.5 Flash OCR Service for Debt Statement Processing */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { normalizeRateMatrix, computeAvg3yr, parseMrtaCell } from '../types/rateMatrix';
 
 // Debt classification categories
 export const DEBT_CATEGORIES = {
@@ -447,17 +448,59 @@ export async function batchExtractDebtData(files, options = {}) {
  */
 function normalizePromoData(parsedData) {
   const str = (v) => (v && v !== 'null' ? String(v).trim() : '');
+  const arr = (v) => (Array.isArray(v) ? v.map(x => String(x || '').trim()).filter(Boolean) : []);
+  // Detailed condition rows (GSB/CIMB-style tables). The backend already
+  // normalizes rate_matrix; this catches the client-side Gemini fallback path.
+  const rateMatrix = normalizeRateMatrix(parsedData?.rate_matrix);
   return {
     bank_name: str(parsedData.bank_name) || 'ไม่ระบุธนาคาร',
     product_name: str(parsedData.product_name) || 'โปรโมชันสินเชื่อบ้านรีไฟแนนซ์',
+    property_types: arr(parsedData.property_types),
     min_income: Number(parsedData.min_income) || 0,
+    customer_type: str(parsedData.customer_type) || 'ทุกประเภท',
+    target_loan_amount: Number(parsedData.target_loan_amount) || 0,
+    min_loan_tier: Number(parsedData.min_loan_tier) || 0,
+    min_loan_amount: Number(parsedData.min_loan_amount) || 0,
+    max_loan_amount: Number(parsedData.max_loan_amount) || 0,
+    max_ltv_percent: Number(parsedData.max_ltv_percent) || 0,
     avg_3yr_rate: Number(parsedData.avg_3yr_rate) || 0,
     year_1_rate: str(parsedData.year_1_rate),
     year_2_3_rate: str(parsedData.year_2_3_rate),
     after_year_3_rate: str(parsedData.after_year_3_rate),
     is_mrta: Boolean(parsedData.is_mrta),
     is_free_mortgage_fee: Boolean(parsedData.is_free_mortgage_fee),
+    fee_waivers: arr(parsedData.fee_waivers),
+    variants: Array.isArray(parsedData.variants) ? parsedData.variants : [],
+    rate_matrix: rateMatrix,
     bank_ref_link: str(parsedData.bank_ref_link)
+  };
+}
+
+/**
+ * When the AI returned a rate_matrix but left the promo-level summary fields
+ * empty, derive them from the best (lowest avg_3yr_rate) matrix row so the
+ * simple form and the user-facing engine always have usable top-level rates.
+ * @param {object} promo - normalized promo with a possibly-empty matrix
+ * @returns {object} promo with summary fields backfilled from rate_matrix
+ */
+export function applyMatrixToFormFields(promo) {
+  const matrix = normalizeRateMatrix(promo?.rate_matrix);
+  if (matrix.length === 0) return promo;
+  const best = [...matrix].sort((a, b) => (a.avg_3yr_rate || 99) - (b.avg_3yr_rate || 99))[0];
+  return {
+    ...promo,
+    min_income: promo.min_income > 0 ? promo.min_income : (best.min_income || 0),
+    avg_3yr_rate: promo.avg_3yr_rate > 0 ? promo.avg_3yr_rate : (best.avg_3yr_rate || 0),
+    year_1_rate: promo.year_1_rate || best.year_1_rate || '',
+    year_2_3_rate: promo.year_2_3_rate || best.year_2_3_rate || '',
+    after_year_3_rate: promo.after_year_3_rate || best.after_year_3_rate || '',
+    is_mrta: parseMrtaCell(promo.is_mrta, Boolean(best.is_mrta)),
+    is_free_mortgage_fee: promo.fee_waivers?.length > 0
+      ? promo.fee_waivers.includes('จดจำนอง')
+      : (promo.is_free_mortgage_fee || Boolean(best.is_free_mortgage)),
+    fee_waivers: (promo.fee_waivers?.length > 0)
+      ? promo.fee_waivers
+      : (best.fee_waivers || [])
   };
 }
 
@@ -504,18 +547,34 @@ export async function extractRefinancePromoFromImage(imageFile, options = {}) {
 
     const prompt = `
   คุณคือ AI ผู้เชี่ยวชาญด้านการวิเคราะห์โปรโมชันสินเชื่อบ้านและดอกเบี้ยรีไฟแนนซ์ (Refinance Interest Rate Banner Analyzer)
+  Extract the interest rate table from the provided image into a strictly structured JSON array of rows (rate_matrix). Pay close attention to column headers and merged cells that indicate conditions. For every single rate option, you MUST explicitly extract its specific conditions: Does it require MRTA? Does it offer a free mortgage fee? What is the income range? Map these into is_mrta, is_free_mortgage, min_income, and the respective interest rate periods (Year 1, Year 2-3, Avg 3 Yr).
   โปรดอ่านและสกัดข้อมูลจากรูปภาพแบนเนอร์โปรโมชันดอกเบี้ยนี้อย่างแม่นยำ แล้วตอบกลับเป็น JSON ภาษาไทยตามโครงสร้างนี้เท่านั้น:
 
   {
     "bank_name": "ชื่อธนาคารเต็มภาษาไทย (เช่น ธนาคารกรุงศรีอยุธยา, ธนาคารกสิกรไทย, ธนาคารอาคารสงเคราะห์, ธนาคารไทยพาณิชย์)",
     "product_name": "ชื่อแพ็กเกจ หรือชื่อโปรโมชันสินเชื่อบ้านรีไฟแนนซ์ที่ปรากฏในรูป",
-    "min_income": 15000, // รายได้ขั้นต่ำต่อเดือนที่สมัครได้เป็นตัวเลข (Number) หากไม่ระบุให้ใช้ 0
-    "avg_3yr_rate": 2.99, // อัตราดอกเบี้ยเฉลี่ย 3 ปีแรกเป็นตัวเลขเปอร์เซ็นต์ float (Number) เช่น 2.55 หรือ 2.99
-    "year_1_rate": "อัตราดอกเบี้ยปีแรก เช่น 1.49% หรือ คงที่ 2.20%",
-    "year_2_3_rate": "อัตราดอกเบี้ยปีที่ 2-3 เช่น 2.20% หรือ MRR-2.15%",
+    "min_income": 15000, // รายได้ขั้นต่ำต่อเดือนของ "แถวที่ดีที่สุด" (Number) หากไม่ระบุให้ใช้ 0
+    "avg_3yr_rate": 2.99, // ดอกเบี้ยเฉลี่ย 3 ปีของ "แถวที่ดีที่สุด" (Number) เช่น 2.55 หรือ 2.99
+    "year_1_rate": "อัตราดอกเบี้ยปีแรกของแถวที่ดีที่สุด เช่น 1.49% หรือ คงที่ 2.20%",
+    "year_2_3_rate": "อัตราดอกเบี้ยปีที่ 2-3 ของแถวที่ดีที่สุด เช่น 2.20% หรือ MRR-2.15%",
     "after_year_3_rate": "อัตราดอกเบี้ยลอยตัวหลังจากปีที่ 3 เช่น MRR-1.50%",
     "is_mrta": true, // boolean (true หากมีเงื่อนไขทำประกัน MRTA / MLTA หรือ false หากไม่มี)
     "is_free_mortgage_fee": true, // boolean (true หากมีโปรโมชันฟรีค่าจดจำนอง 1% หรือ false หากไม่มี)
+    "rate_matrix": [ // บังคับ: 1 แถวของตารางแบนเนอร์ = 1 object (ห้ามยุบหลายแถวเป็นแถวเดียว)
+      {
+        "customer_group": "พนักงานประจำ", // กลุ่มลูกค้าของแถวนี้ (ทุกประเภท หากไม่ระบุ)
+        "min_income": 15000, // รายได้ขั้นต่ำของแถวนี้ (Number) — 0 หากไม่กำหนด
+        "property_types": ["บ้านเดี่ยว"], // ประเภทหลักประกันเฉพาะแถวนี้ ([] หารับทุกประเภท)
+        "is_mrta": true, // เซลล์ "ทำประกันชีวิต" = true, "ไม่ทำ" = false
+        "is_free_mortgage": true, // เซลล์ "ฟรีค่าจดจำนอง" = true, "-"/ไม่ระบุ = false
+        "fee_waivers": ["จดจำนอง"], // ประเมินราคา / จดจำนอง / อากรแสตมป์ ([] หากไม่มี)
+        "year_1_rate": "1.49%", // ดอกเบี้ยปีที่ 1 ของแถวนี้
+        "year_2_3_rate": "2.49%", // ดอกเบี้ยปีที่ 2-3 ของแถวนี้
+        "after_year_3_rate": "MRR - 2.00%", // ดอกเบี้ยหลังปีที่ 3 (ถ้ามี)
+        "avg_3yr_rate": 2.16, // เฉลี่ย 3 ปีของแถวนี้ (Number) — 0 หากไม่พบ
+        "eir": 2.61 // EIR ของแถวนี้ (Number) — 0 หากไม่พบ
+      }
+    ],
     "bank_ref_link": "URL เว็บไซต์ธนาคารที่ระบุในแบนเนอร์ (ถ้ามี หากไม่มีให้ระบุ null หรือ string ว่าง)"
   }
 `;
@@ -538,8 +597,8 @@ export async function extractRefinancePromoFromImage(imageFile, options = {}) {
 
     const parsedData = parseGeminiResponse(text);
 
-    // Normalize and validate
-    const normalized = normalizePromoData(parsedData);
+    // Normalize and validate, then backfill promo-level fields from the matrix
+    const normalized = applyMatrixToFormFields(normalizePromoData(parsedData));
 
     onProgress({ stage: 'completed', status: 'วิเคราะห์โปรโมชันสำเร็จ' });
     return normalized;

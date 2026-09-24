@@ -3,120 +3,61 @@ import {
   Home,
   ChevronRight,
   Landmark,
-  Wallet,
-  Percent,
-  Building2,
-  FileDown,
   RefreshCw,
   Sparkles,
   Info,
-  ArrowRight,
-  ArrowLeft,
-  CheckCircle2,
+  Briefcase,
   Banknote,
-  CalendarClock,
-  BadgePercent,
-  FileText,
+  Wallet,
+  MapPin,
   ShieldCheck,
-  UserRound,
-  Square,
-  CheckSquare
+  Percent,
+  Target,
+  Building2,
+  ExternalLink,
+  AlertTriangle,
+  Trophy
 } from 'lucide-react';
-import { calculateRefinanceSavings, formatBaht, OCCUPATIONS } from '../utils/refinanceCalculator';
-import { getRequiredDocChecklist, OCCUPATION_LABELS } from '../utils/documentChecklist';
-import { buildRefinancePdf } from '../utils/pdfPackager';
+import { formatBaht, OCCUPATIONS } from '../utils/refinanceCalculator';
+import { getProvinceRateInfo } from '../data/provinceRateModifiers';
+import { THAI_PROVINCES } from '../data/thaiProvinces';
+import { getPromotions, getOccupations, PROPERTY_TYPES } from '../services/refinancePromotionService';
+import { findBestMatch, hasUsableBestMatch } from '../utils/bestMatchEngine';
 import BankLogo from './BankLogo';
-import { useBankOffers } from '../hooks/useBankOffers';
-import { getProvinceRateInfo, RATE_TIERS } from '../data/provinceRateModifiers';
 import FormattedNumberInput from './FormattedNumberInput';
-import StepBackButton from './StepBackButton';
-import RefinanceWizard from './RefinanceWizard';
+import { getBankShort } from '../utils/promotionSync';
 
-/** Occupations shown in the form dropdown (Thai labels). */
-const OCCUPATION_OPTIONS = [
-  { value: 'salaried', label: '👔 พนักงานเงินเดือน (Salaried)' },
-  { value: 'government', label: '🏛️ ข้าราชการ / พนักงานรัฐวิสาหกิจ (Government)' },
-  { value: 'freelance', label: '💻 ฟรีแลนซ์ / อาชีพอิสระ (Freelance)' },
-  { value: 'business', label: '🏢 เจ้าของกิจการ / ธุรกิจ (Business Owner)' },
-  { value: 'pensioner', label: '👵 ผู้รับบำนาญ / เกษียณอายุ (Pensioner)' },
-  { value: 'other', label: '✍️ อื่นๆ (ระบุอาชีพเอง)' }
+const STORAGE_KEY = (userName) => `nee_noi_refinance_form_v3_${userName}`;
+
+/** Icons for the property type chips. */
+const PROPERTY_TYPE_ICONS = {
+  'บ้านเดี่ยว': '🏡',
+  'ทาวน์เฮาส์': '🏘️',
+  'คอนโด': '🏢',
+  'อาคารพาณิชย์': '🏬',
+  'ที่ดินพร้อมสิ่งปลูกสร้าง': '🌾'
+};
+
+/** MRTA option chips. */
+const MRTA_OPTIONS = [
+  { value: true, label: '✅ ทำ MRTA', desc: 'เปิดสิทธิ์โปรโมชันอัตราดอกเบี้ยที่ต้องทำประกัน' },
+  { value: false, label: '❌ ไม่ทำ MRTA', desc: 'เลือกเฉพาะแพ็กเกจที่ไม่บังคับทำประกัน' }
 ];
 
-export default function RefinanceDashboard({ userName = 'User', onBack, onNavigateToConsolidation, ocrDebts = [] }) {
-  const { lastUpdatedBadge, lowestRate, rateMatrix, isLive, isFetching, refreshRates } = useBankOffers();
-  // ---------- Persistent form state ----------
-  const [form, setForm] = useState(() => {
-    const saved = localStorage.getItem(`nee_noi_refinance_form_${userName}`);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (parsed.remainingYears && !parsed.remainingMonths) {
-          parsed.remainingMonths = parsed.remainingYears * 12;
-        }
-        return parsed;
-      } catch (e) { /* ignore malformed */ }
-    }
-    return {
-      name: userName || '',
-      monthlyIncome: 30000,
-      occupation: 'salaried',
-      customOccupation: '',
-      currentBalance: 1000000,
-      currentRate: 6.0,
-      wantMRTA: true,
-      selectedHomeLoanId: '',
-      province: '',
-      remainingMonths: 180
-    };
-  });
-
-  // ---------- Wizard step: 1 = input (wizard), 2 = comparison, 3 = action ----------
-  const [step, setStep] = useState(1);
-  const [selectedPkgId, setSelectedPkgId] = useState(null);
-  const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
-  const [generating, setGenerating] = useState(false);
-
-  // ---------- Interactive checklist state (persisted) ----------
-  const [checklist, setChecklist] = useState(() => {
-    const saved = localStorage.getItem(`nee_noi_refinance_checklist_${userName}`);
-    return saved ? JSON.parse(saved) : {};
-  });
-
-  // Persist form + checklist
-  useEffect(() => {
-    localStorage.setItem(`nee_noi_refinance_form_${userName}`, JSON.stringify(form));
-  }, [form, userName]);
-  useEffect(() => {
-    localStorage.setItem(`nee_noi_refinance_checklist_${userName}`, JSON.stringify(checklist));
-  }, [checklist, userName]);
-
-  // ---------- Calculation (pure engine, memoized) ----------
-  const calculation = useMemo(() => {
-    const income = Number(form.monthlyIncome) || 0;
-    const balance = Number(form.currentBalance) || 0;
-    const rate = Number(form.currentRate) || 0;
-    if (income <= 0 || balance <= 0) return null;
-    return calculateRefinanceSavings({
-      currentBalance: balance,
-      currentRate: rate,
-      monthlyIncome: income,
-      occupation: form.occupation,
-      wantMRTA: form.wantMRTA,
-      termYears: 3,
-      packages: rateMatrix?.packages
-    });
-  }, [form.monthlyIncome, form.currentBalance, form.currentRate, form.occupation, form.wantMRTA, rateMatrix]);
-
-  // Default-select the best package when results appear
-  useEffect(() => {
-    if (calculation?.best) {
-      setSelectedPkgId(prev => prev || calculation.best.package.id);
-    }
-  }, [calculation]);
-
-  const selected = calculation?.results.find(r => r.package.id === selectedPkgId) || calculation?.best || null;
-  // ---------- Auto-fill from debts list (AI detection) ----------
+/**
+ * RefinanceDashboard — Single-Page Refinance Form (spec v2)
+ *
+ * Field order (top to bottom):
+ *   1. Select existing home loan  (dropdown: A/B balance, remaining tenure, current rate)
+ *   2. Select occupation          (from master data)
+ *   3. Monthly income
+ *   4. Province                   (77 Thai provinces)
+ *   5. Top-up / cash-out          → target_loan_amount = balance + top-up
+ *   6. MRTA option                [Yes / No]
+ *   → Smart Best-Match: single recommendation card with external redirect.
+ */
+export default function RefinanceDashboard({ userName = 'User', onBack, ocrDebts = [] }) {
+  // ---------- Home loans detected from the user's debt list ----------
   const homeLoans = useMemo(() => {
     const isHomeLoan = (d) => {
       if (d.debtCategory === 'HOME_LOAN') return true;
@@ -127,88 +68,137 @@ export default function RefinanceDashboard({ userName = 'User', onBack, onNaviga
     return (ocrDebts || []).filter(isHomeLoan);
   }, [ocrDebts]);
 
-  const autoFillData = useMemo(() => {
-    const loan = homeLoans[0];
-    if (!loan) return null;
+  // ---------- Single-page form state ----------
+  const [form, setForm] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_KEY(userName));
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) { /* ignore */ }
+    }
+    const firstLoan = null;
     return {
-      name: loan.name || loan.lender || '',
-      balance: Number(loan.totalBalance || loan.balance || 0),
-      interestRate: Number(loan.interestRate || loan.rate || 0)
+      selectedHomeLoanId: firstLoan?.id || '',
+      existingBalance: 1000000,
+      remainingTenureMonths: 180,
+      currentRate: 6.0,
+      propertyType: 'บ้านเดี่ยว',
+      propertyValue: 0,
+      occupation: 'salaried',
+      customOccupation: '',
+      monthlyIncome: 30000,
+      province: '',
+      topUpAmount: 0,
+      wantMRTA: true
     };
+  });
+
+  // Auto-select the first detected home loan & sync its numbers
+  useEffect(() => {
+    if (homeLoans.length === 0) return;
+    setForm(prev => {
+      const alreadyValid = prev.selectedHomeLoanId && homeLoans.some(l => l.id === prev.selectedHomeLoanId);
+      const loan = alreadyValid ? homeLoans.find(l => l.id === prev.selectedHomeLoanId) : homeLoans[0];
+      const balance = Number(loan.totalBalance || loan.balance || 0);
+      const rate = Number(loan.interestRate || loan.rate || 0);
+      return {
+        ...prev,
+        selectedHomeLoanId: loan.id,
+        existingBalance: balance > 0 ? balance : prev.existingBalance,
+        currentRate: rate > 0 ? rate : prev.currentRate
+      };
+    });
   }, [homeLoans]);
 
-  // Auto-fill form from detected home loan — debt data is source of truth
+  // Persist form
   useEffect(() => {
-    if (!autoFillData) return;
-    setForm(prev => {
-      const updated = { ...prev };
-      if (!prev.name && userName) updated.name = userName;
-      else if (!prev.name && autoFillData.name) updated.name = autoFillData.name;
-      // Always update balance/rate from debt data
-      if (autoFillData.balance > 0) updated.currentBalance = autoFillData.balance;
-      if (autoFillData.interestRate > 0) updated.currentRate = autoFillData.interestRate;
-      return updated;
-    });
-  }, [autoFillData, userName]);
+    localStorage.setItem(STORAGE_KEY(userName), JSON.stringify(form));
+  }, [form, userName]);
 
-  const requiredDocs = useMemo(() => getRequiredDocChecklist(form.occupation), [form.occupation]);
-  const checkedCount = requiredDocs.filter(doc => checklist[doc.id]).length;
+  // ---------- Master data (occupations + promotions) ----------
+  const [occupations, setOccupations] = useState([]);
+  const [promotions, setPromotions] = useState([]);
+  const [loadingData, setLoadingData] = useState(true);
+  const [dataError, setDataError] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // ---------- Step 1: validate and go to comparison ----------
-  const goToComparison = () => {
-    if (!(Number(form.monthlyIncome) > 0)) return setError('⚠️ กรุณากรอกรายได้ต่อเดือน (บาท)');
-    if (!(Number(form.currentBalance) > 0)) return setError('⚠️ กรุณากรอกยอดหนี้บ้านคงเหลือ (บาท)');
-    if (!(Number(form.currentRate) >= 0)) return setError('⚠️ กรุณากรอกอัตราดอกเบี้ยปัจจุบัน (%)');
-    if (!form.occupation || !OCCUPATIONS.includes(form.occupation)) return setError('⚠️ กรุณาเลือกประเภทอาชีพ');
-    if (form.occupation === 'other' && (!form.customOccupation || !form.customOccupation.trim())) {
-      return setError('⚠️ กรุณาระบุประเภทอาชีพของคุณในช่องกรอกข้อความ');
-    }
-    if (!form.province || !form.province.trim()) return setError('⚠️ กรุณาเลือกจังหวัดที่ตั้งบ้าน');
-    if (!(Number(form.remainingMonths) > 0)) return setError('⚠️ กรุณาระบุจำนวนเดือนที่เหลือเวลาผ่อน');
-    setError('');
-    setMessage('');
-    setStep(2);
-  };
-
-  // ---------- Step 3: generate & download the PDF pack ----------
-  const handleDownload = async () => {
-    if (!selected || !calculation) return;
-    setGenerating(true);
-    setMessage('');
+  const loadMasterData = async (showSpinner = false) => {
+    if (showSpinner) setIsRefreshing(true);
+    setLoadingData(true);
     try {
-      const bytes = await buildRefinancePdf({
-        applicantName: form.name || userName,
-        occupationLabel: form.occupation === 'other' ? (form.customOccupation || 'อื่นๆ (ระบุ)') : (OCCUPATION_LABELS[form.occupation] || form.occupation),
-        monthlyIncome: Number(form.monthlyIncome) || 0,
-        wantMRTA: !!form.wantMRTA,
-        remainingMonths: Number(form.remainingMonths) || 180,
-        calculation,
-        selected,
-        checklist: requiredDocs
-      });
-      // Trigger browser download of the generated bytes
-      const blob = new Blob([bytes], { type: 'application/pdf' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `Walkin-Refinance-${selected.bankShort}-${new Date().toISOString().split('T')[0]}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      setMessage(`✅ ดาวน์โหลด Walk-in PDF Pack (${selected.bankShort}) เรียบร้อย พร้อมพิมพ์ไปยื่นที่สาขา!`);
+      const [occ, promos] = await Promise.all([getOccupations(), getPromotions()]);
+      setOccupations(occ);
+      setPromotions(promos);
+      setDataError('');
     } catch (err) {
-      setMessage(`❌ สร้าง PDF ไม่สำเร็จ: ${err.message || 'เกิดข้อผิดพลาด'}`);
+      setDataError(err.message || 'โหลดข้อมูลไม่สำเร็จ');
     } finally {
-      setGenerating(false);
+      setLoadingData(false);
+      if (showSpinner) setIsRefreshing(false);
     }
   };
 
-  // ---------- Toggle a checklist item ----------
-  const toggleDoc = (id) => {
-    setChecklist(prev => ({ ...prev, [id]: !prev[id] }));
+  useEffect(() => { loadMasterData(false); }, []);
+
+  // Selected home loan object (for the picker metadata display)
+  const selectedLoan = useMemo(
+    () => homeLoans.find(l => l.id === form.selectedHomeLoanId) || null,
+    [homeLoans, form.selectedHomeLoanId]
+  );
+
+  // Occupation dropdown options from master data (fallback to engine keys)
+  const occupationOptions = useMemo(() => {
+    const usable = (occupations || []).filter(o => o.allowed !== false);
+    if (usable.length === 0) {
+      return OCCUPATIONS.map(key => ({ key, label: key }));
+    }
+    return usable.map(o => ({ key: o.key || o.id, label: o.label || o.labelEn || o.key }));
+  }, [occupations]);
+
+  const selectedOccupationLabel = useMemo(() => {
+    const found = occupationOptions.find(o => o.key === form.occupation);
+    if (found) return found.label;
+    return form.occupation === 'other' && form.customOccupation ? form.customOccupation : (form.occupation || '-');
+  }, [occupationOptions, form.occupation, form.customOccupation]);
+
+  // ---------- SMART BEST-MATCH (single recommendation) ----------
+  const bestMatch = useMemo(() => {
+    const income = Number(form.monthlyIncome) || 0;
+    const balance = Number(form.existingBalance) || 0;
+    if (income <= 0 || balance <= 0 || promotions.length === 0) return null;
+    return findBestMatch({
+      promotions,
+      propertyType: form.propertyType || '',
+      existingBalance: balance,
+      topUpAmount: Number(form.topUpAmount) || 0,
+      propertyValue: Number(form.propertyValue) || 0,
+      currentRate: Number(form.currentRate) || 0,
+      monthlyIncome: income,
+      occupation: form.occupation,
+      wantMRTA: Boolean(form.wantMRTA)
+    });
+  }, [form.monthlyIncome, form.existingBalance, form.topUpAmount, form.propertyType, form.propertyValue, form.currentRate, form.occupation, form.wantMRTA, promotions]);
+
+  const best = bestMatch?.best || null;
+  const showBestCard = hasUsableBestMatch(bestMatch);
+
+  // ---------- Manual-empty-form fallback (parse failure / no match) ----------
+  const [manualMode, setManualMode] = useState(false);
+
+  // Validation summary state
+  const [error, setError] = useState('');
+
+  const handleHomeLoanSelect = (loanId) => {
+    const loan = homeLoans.find(l => l.id === loanId);
+    setForm(prev => ({
+      ...prev,
+      selectedHomeLoanId: loanId,
+      existingBalance: Number(loan?.totalBalance || loan?.balance || 0) || prev.existingBalance,
+      currentRate: Number(loan?.interestRate || loan?.rate || 0) || prev.currentRate
+    }));
   };
 
+  const provinceInfo = form.province ? getProvinceRateInfo(form.province) : null;
+
+  // ---------- Render ----------
   return (
     <div className="ref-page space-y-6 animate-fade-in pb-16">
 
@@ -221,391 +211,464 @@ export default function RefinanceDashboard({ userName = 'User', onBack, onNaviga
         <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
         <span className="text-indigo-600 font-bold flex items-center gap-1.5 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-200">
           <Landmark className="w-3.5 h-3.5" />
-          เครื่องคำนวณรีไฟแนนซ์ & ชุดเอกสารยื่นสาขา
+          รีไฟแนนซ์บ้าน — จับคู่แพ็กเกจที่คุ้มที่สุดให้คุณ
         </span>
       </div>
 
-      {/* Header hero */}
+      {/* Header */}
       <div className="bg-white p-6 rounded-2xl border border-indigo-100 shadow-md relative overflow-hidden">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 relative z-10">
           <div>
             <span className="badge-gold">
               <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-              Refinance Calculator & Walk-in Document Packager
+              Smart Best-Match Refinance
             </span>
             <h1 className="text-2xl font-black text-slate-900 pt-2 tracking-tight">
-              รีไฟแนนซ์บ้าน ลดดอกเบี้ย ลดค่างวด
+              รีไฟแนนซ์บ้าน — กรอกครั้งเดียว จบในหน้าเดียว
             </h1>
             <p className="text-xs text-slate-500 font-medium mt-1 max-w-xl leading-relaxed">
-              เปรียบเทียบโปรโมชันรีไฟแนนซ์จากธนาคารชั้นนำ ดึงข้อมูลสดจากเว็บธนาคารพร้อมระบบออฟไลน์สำรอง
-              คำนวณยอดประหยัดสุทธิ พร้อมดาวน์โหลด PDF ชุดเอกสารไปยื่นที่สาขาเองได้เลย
+              ระบบจะกรองโปรโมชันที่คุณผ่านเกณฑ์ (รายได้ • วงเงิน • MRTA) แล้วแนะนำแพ็กเกจที่ประหยัดสุทธิสูงสุดเพียงแพ็กเกจเดียว
+              พร้อมปุ่มไปที่เว็บไซต์ธนาคารโดยตรง
             </p>
           </div>
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 text-[11px] bg-indigo-50/70 border border-indigo-100 rounded-xl px-3 py-2 text-indigo-700 font-bold">
-            <span className={`flex items-center gap-1 px-2 py-0.5 rounded ${isLive ? 'text-emerald-700 bg-emerald-100' : 'text-amber-800 bg-amber-100'}`}>
-              <Sparkles className="w-3.5 h-3.5" />
-              {lastUpdatedBadge}
-            </span>
+          <div className="flex items-center gap-2 text-[11px] bg-indigo-50/70 border border-indigo-100 rounded-xl px-3 py-2 text-indigo-700 font-bold">
+            <Info className="w-3.5 h-3.5" />
+            โปรโมชันในระบบ {promotions.length} แพ็กเกจ
             <button
-              onClick={() => refreshRates(true)}
-              disabled={isFetching}
-              className="flex items-center gap-1 px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white transition-all cursor-pointer disabled:opacity-50"
-              title="ดึงข้อมูลอัตราดอกเบี้ยล่าสุดสดๆ จากเว็บธนาคาร"
+              onClick={() => loadMasterData(true)}
+              disabled={isRefreshing}
+              className="ml-1 flex items-center gap-1 px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white transition-all cursor-pointer disabled:opacity-50"
+              title="ดึงข้อมูลโปรโมชันล่าสุดจากฐานข้อมูลแอดมิน"
             >
-              <RefreshCw className={`w-3 h-3 ${isFetching ? 'animate-spin' : ''}`} />
-              {isFetching ? 'กำลังดึง...' : '🔄 ดึงข้อมูลสด'}
+              <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />
+              รีเฟรช
             </button>
-            <span className="text-slate-400">|</span>
-            <span className="flex items-center gap-1">
-              <Info className="w-3.5 h-3.5" />
-              อัตราดอกเบี้ยเริ่มต้น {lowestRate}%
-            </span>
           </div>
         </div>
       </div>
 
-      {/* Step indicator */}
-      <div className="flex items-center gap-2 text-xs font-bold">
-        {[
-          { n: 1, label: 'กรอกข้อมูล' },
-          { n: 2, label: 'เปรียบเทียบแพ็กเกจ' },
-          { n: 3, label: 'ดาวน์โหลดชุดเอกสาร' }
-        ].map((s, i) => (
-          <React.Fragment key={s.n}>
-            {i > 0 && <span className="h-px flex-1 bg-slate-300 max-w-10" />}
-            <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border transition-all ${
-              step === s.n
-                ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-500/25'
-                : step > s.n
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                  : 'bg-white text-slate-500 border-slate-200'
-            }`}>
-              <span className={`w-5 h-5 rounded-full text-[10px] flex items-center justify-center font-black ${
-                step === s.n ? 'bg-white text-indigo-700' : step > s.n ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-500'
-              }`}>
-                {step > s.n ? '✓' : s.n}
-              </span>
-              {s.label}
-            </span>
-          </React.Fragment>
-        ))}
-      </div>
+      {/* ============ SINGLE-PAGE FORM ============ */}
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5">
+        <h2 className="text-base font-black text-slate-900 flex items-center gap-2 border-b border-slate-100 pb-3">
+          <Wallet className="w-5 h-5 text-indigo-600" />
+          ข้อมูลสำหรับคำนวณรีไฟแนนซ์
+        </h2>
 
-      {/* ============ STEP 1: WIZARD INPUT ============ */}
-      {step === 1 && (
-        <RefinanceWizard
-          form={form}
-          setForm={setForm}
-          ocrData={autoFillData}
-          ocrDebts={ocrDebts}
-          onComplete={() => {
-            setError('');
-            setMessage('');
-            setStep(2);
-          }}
-        />
-      )}
-
-      {/* Floating back button */}
-      <StepBackButton
-        currentStep={step}
-        totalSteps={3}
-        onClick={() => setStep(step - 1)}
-        label={step === 2 ? 'แก้ไขข้อมูล' : 'เปลี่ยนแพ็กเกจ'}
-        visible={step >= 2}
-      />
-
-      {/* ============ STEP 2: COMPARISON ============ */}
-      {step === 2 && calculation && (
-        <div className="space-y-5">
-          {/* Current situation summary */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/80">
-              <div className="text-xs text-slate-500 font-medium">ยอดหนี้ปัจจุบัน</div>
-              <div className="text-lg font-black text-indigo-600">{formatBaht(calculation.current.balance)}</div>
-            </div>
-            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/80">
-              <div className="text-xs text-slate-500 font-medium">ดอกเบี้ยปัจจุบัน</div>
-              <div className="text-lg font-black text-rose-600">{calculation.current.rate}% / ปี</div>
-            </div>
-            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/80">
-              <div className="text-xs text-slate-500 font-medium">ค่างวดปัจจุบัน</div>
-              <div className="text-lg font-black text-slate-900">{formatBaht(calculation.current.monthly)}/เดือน</div>
-            </div>
-            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/80">
-              <div className="text-xs text-slate-500 font-medium">ดอกเบี้ยรวม 36 เดือน (ปัจจุบัน)</div>
-              <div className="text-lg font-black text-slate-900">{formatBaht(calculation.current.totalInterest)}</div>
-            </div>
-          </div>
-
-          {/* Province rate info */}
-          {form.province && (() => {
-            const rateInfo = getProvinceRateInfo(form.province);
-            if (!rateInfo) return null;
-            const tierData = RATE_TIERS.find(t => t.tier === rateInfo.tier);
-            const c = tierData?.color || 'amber';
-            return (
-              <div className={`p-3.5 rounded-xl border bg-${c}-50/60 border-${c}-200 flex items-start gap-3`}>                
-                <span className="text-lg flex-shrink-0 mt-0.5">{tierData?.emoji}</span>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <span className={`text-xs font-bold text-${c}-700`}>{form.province}</span>
-                    <span className={`text-[10px] font-semibold text-${c}-600`}>{rateInfo.label}</span>
-                    {rateInfo.modifier > 0 ? (
-                      <span className={`text-[10px] font-black px-1.5 py-0.5 rounded bg-${c}-200 text-${c}-800`}>+{rateInfo.modifier}% จาก base</span>
-                    ) : (
-                      <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-emerald-200 text-emerald-800">อัตราต่ำสุด</span>
-                    )}
-                  </div>
-                  <p className={`text-[11px] text-${c}-600 leading-relaxed`}>{tierData?.desc}</p>
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Eligible note */}
-          <div className="text-xs text-slate-500 font-medium bg-indigo-50/60 border border-indigo-100 rounded-xl px-3.5 py-2.5 flex items-center gap-2">
-            <BadgePercent className="w-4 h-4 text-indigo-600" />
-            พบแพ็กเกจที่คุณผ่านเกณฑ์ (รายได้ + อาชีพ) ทั้งหมด <strong className="text-indigo-700">{calculation.results.length} แพ็กเกจ</strong> — เรียงจากดอกเบี้ยที่ประหยัดได้มากที่สุดลงมา
-          </div>
-
-          {/* Candidate bank cards */}
-          {calculation.results.length === 0 ? (
-            <div className="bg-white p-10 rounded-2xl border border-slate-200 shadow-sm text-center space-y-3">
-              <ShieldCheck className="w-12 h-12 text-slate-300 mx-auto" />
-              <h3 className="font-bold text-slate-700">ไม่พบแพ็กเกจที่ผ่านเกณฑ์</h3>
-              <p className="text-xs text-slate-500 max-w-md mx-auto">
-                จากข้อมูลรายได้และอาชีพที่กรอก ยังไม่มีโปรโมชันใดผ่านเกณฑ์ขั้นต่ำ
-                ลองปรับรายได้หรือลองธนาคารอื่นในอนาคตได้
-              </p>
-              <button onClick={() => setStep(1)} className="btn-secondary text-xs cursor-pointer">
-                <ArrowLeft className="w-4 h-4" /> กลับไปแก้ไขข้อมูล
-              </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {calculation.results.map((r, idx) => {
-                const isSelected = r.package.id === selectedPkgId;
-                const isBest = idx === 0 && r.netSavings > 0;
-                return (
-                  <button
-                    key={r.package.id}
-                    onClick={() => setSelectedPkgId(r.package.id)}
-                    className={`text-left p-5 rounded-2xl border-2 transition-all cursor-pointer relative overflow-hidden ${
-                      isSelected
-                        ? 'border-indigo-500 bg-indigo-50/40 shadow-md'
-                        : 'border-slate-200 bg-white hover:border-indigo-300 hover:shadow-sm'
-                    }`}
-                  >
-                    {isBest && (
-                      <span className="absolute top-0 right-0 bg-emerald-600 text-white text-[9px] font-black px-2.5 py-1 rounded-bl-xl rounded-tr-2xl uppercase tracking-wider">
-                        ⭐ คุ้มสุด
-                      </span>
-                    )}
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <BankLogo bankShort={r.bankShort} logoUrl={r.package.logoUrl} size={34} />
-                          <span className="text-sm font-black text-slate-900">{r.bank}</span>
-                          {r.package.promoImageUrl && (
-                            <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 border border-indigo-200">
-                              แบนเนอร์โปรโมชัน
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[11px] text-slate-500 font-medium mt-0.5">{r.packageTitle}</p>
-                      </div>
-                      <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-1 ${
-                        isSelected ? 'border-indigo-600 bg-indigo-600' : 'border-slate-300'
-                      }`}>
-                        {isSelected && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3 mt-4">
-                      <div className="bg-white rounded-xl border border-slate-200 p-2.5">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">ค่างวดต่อเดือน</div>
-                        <div className="text-base font-black text-indigo-600">{formatBaht(r.newMonthly)}</div>
-                      </div>
-                      <div className="bg-white rounded-xl border border-slate-200 p-2.5">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">ดอกเบี้ยเฉลี่ย 36 เดือน</div>
-                        <div className="text-base font-black text-rose-600">{r.rate3YAvg}%</div>
-                      </div>
-                      <div className="bg-white rounded-xl border border-slate-200 p-2.5">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">ดอกเบี้ยทั้งหมด 36 เดือน</div>
-                        <div className="text-base font-black text-rose-600">{formatBaht(r.newInterest)}</div>
-                      </div>
-                      <div className="bg-white rounded-xl border border-slate-200 p-2.5">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">ดอกเบี้ยที่ประหยัดได้</div>
-                        <div className={`text-base font-black ${r.grossSavings > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                          {formatBaht(r.grossSavings)}
-                        </div>
-                      </div>
-                    </div>
-
-                    {r.package.promoImageUrl && (
-                      <img
-                        src={r.package.promoImageUrl}
-                        alt={`แบนเนอร์โปรโมชัน ${r.bank}`}
-                        className="mt-3 w-full max-h-28 object-contain rounded-lg border border-slate-200 bg-slate-50"
-                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                      />
-                    )}
-
-                    <div className="mt-3 text-[11px] text-slate-500 font-medium space-y-1">
-                      <div>ค่าธรรมเนียมรวม: <strong className={r.fees.total > 0 ? 'text-rose-600' : 'text-emerald-600'}>{formatBaht(r.fees.total)}</strong></div>
-                      {r.fees.breakdown.filter(f => f.waived).length > 0 && (
-                        <div className="text-emerald-700 font-bold">
-                          🎁 {r.fees.breakdown.filter(f => f.waived).map(f => f.label.replace(' (1%)', '')).join(' + ')} ฟรี!
-                        </div>
-                      )}
-                      {r.package.bankRefLink && (
-                        <a
-                          href={r.package.bankRefLink}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="text-indigo-600 hover:text-indigo-800 font-bold underline inline-flex items-center gap-1"
-                        >
-                          เว็บไซต์ธนาคาร <ArrowRight className="w-3 h-3" />
-                        </a>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          <div className="flex justify-between pt-2">
-            <button onClick={() => setStep(1)} className="btn-secondary text-xs cursor-pointer">
-              <ArrowLeft className="w-4 h-4" /> แก้ไขข้อมูล
-            </button>
-            <button
-              onClick={() => selected && setStep(3)}
-              disabled={!selected}
-              className="btn-gold text-xs py-3 px-6 font-extrabold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              เลือกแพ็กเกจนี้ → สร้างชุดเอกสาร
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ============ STEP 3: ACTION (download + checklist) ============ */}
-      {step === 3 && selected && (
-        <div className="space-y-5">
-          {/* Selected package recap */}
-          <div className="ref-recap text-white p-6 rounded-2xl shadow-md relative overflow-hidden">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10">
-              <div className="flex items-center gap-3">
-                <BankLogo bankShort={selected.bankShort} logoUrl={selected.package.logoUrl} size={48} />
-                <div>
-                  <span className="text-[10px] font-black uppercase tracking-wider text-indigo-200">แพ็กเกจที่เลือก</span>
-                  <h2 className="text-xl font-black pt-0.5">{selected.bank} — {selected.packageTitle}</h2>
-                  <p className="text-xs text-indigo-100 font-medium mt-1">
-                    ดอกเบี้ยเฉลี่ย 36 เดือน {selected.rate3YAvg}% • ค่างวดใหม่ {formatBaht(selected.newMonthly)}/เดือน • ประหยัดดอกเบี้ย {formatBaht(selected.grossSavings)}
-                  </p>
-                </div>
-              </div>
-              <button onClick={() => setStep(2)} className="text-xs px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 border border-white/30 font-bold flex items-center gap-1.5 cursor-pointer transition-colors">
-                <RefreshCw className="w-3.5 h-3.5" /> เปลี่ยนแพ็กเกจ
-              </button>
-            </div>
-          </div>
-
-          {/* Download button */}
-          <div className="bg-white p-6 rounded-2xl border border-indigo-100 shadow-sm">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-md">
-                  <FileText className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="text-base font-extrabold text-slate-900">Walk-in Application PDF Package</h3>
-                  <p className="text-xs text-slate-500 font-medium mt-0.5">
-                    2 หน้า: หน้าปกสรุปการยื่นรีไฟแนนซ์ + รายการเอกสารสำหรับยื่นที่สาขา (พิมพ์ได้ทันที)
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={handleDownload}
-                disabled={generating}
-                className="btn-gold text-xs py-3.5 px-6 font-extrabold cursor-pointer disabled:opacity-50"
+        {/* 1. Select existing home loan */}
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
+            <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">1</span>
+            เลือกหนี้บ้านที่มีอยู่ (Existing Home Loan)
+          </label>
+          {homeLoans.length > 0 ? (
+            <>
+              <select
+                value={form.selectedHomeLoanId}
+                onChange={(e) => handleHomeLoanSelect(e.target.value)}
+                className="input-dark text-sm cursor-pointer w-full"
               >
-                <FileDown className="w-4 h-4" />
-                {generating ? 'กำลังสร้าง PDF...' : 'ดาวน์โหลด Walk-in PDF Pack'}
+                {homeLoans.map(loan => (
+                  <option key={loan.id} value={loan.id}>
+                    {loan.name || loan.lender || 'สินเชื่อบ้าน'} — {Number(loan.totalBalance || loan.balance || 0).toLocaleString()} ฿ @ {Number(loan.interestRate || loan.rate || 0)}%
+                  </option>
+                ))}
+                <option value="">— ไม่เลือก (กรอกเองด้านล่าง) —</option>
+              </select>
+              {selectedLoan && (
+                <div className="grid grid-cols-3 gap-2 mt-2">
+                  <div className="bg-indigo-50/70 border border-indigo-100 rounded-xl p-2.5">
+                    <div className="text-[10px] text-slate-500 font-bold">ยอดคงเหลือ (Balance)</div>
+                    <div className="text-sm font-black text-indigo-700">฿{Number(selectedLoan.totalBalance || selectedLoan.balance || 0).toLocaleString()}</div>
+                  </div>
+                  <div className="bg-indigo-50/70 border border-indigo-100 rounded-xl p-2.5">
+                    <div className="text-[10px] text-slate-500 font-bold">ดอกเบี้ยปัจจุบัน</div>
+                    <div className="text-sm font-black text-rose-600">{Number(selectedLoan.interestRate || selectedLoan.rate || 0)}% / ปี</div>
+                  </div>
+                  <div className="bg-indigo-50/70 border border-indigo-100 rounded-xl p-2.5">
+                    <div className="text-[10px] text-slate-500 font-bold">ผ่อนคงเหลือ</div>
+                    <div className="text-sm font-black text-amber-600">
+                      {Number(selectedLoan.tenureMonths || selectedLoan.remainingMonths || form.remainingTenureMonths || 0).toLocaleString()} เดือน
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-[11px] text-slate-400 font-medium bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5">
+              ยังไม่พบหนี้บ้านในระบบ — กรอกยอดหนี้และดอกเบี้ยปัจจุบันด้านล่างได้เลย หรือเพิ่มหนี้บ้านผ่านหน้า "สแกนใบแจ้งหนี้"
+            </p>
+          )}
+        </div>
+
+        {/* Property type (strict matching input) */}
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
+            <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">🏠</span>
+            ประเภทหลักประกัน (Property Type) — ใช้จับคู่เงื่อนไขธนาคารแบบเข้มงวด
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {PROPERTY_TYPES.map(type => {
+              const selected = form.propertyType === type;
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => setForm({ ...form, propertyType: type })}
+                  className={`text-xs font-bold px-3.5 py-2 rounded-xl border-2 transition-all cursor-pointer ${
+                    selected
+                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                      : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'
+                  }`}
+                >
+                  {PROPERTY_TYPE_ICONS[type] || '🏠'} {type}
+                </button>
+              );
+            })}
+          </div>
+          {/* Optional property value for the LTV gate */}
+          <div className="mt-2 max-w-xs">
+            <label className="block text-[11px] font-bold text-slate-500 mb-1">
+              มูลค่าประเมินทรัพย์ (ถ้าทราบ) — ใช้ตรวจเงื่อนไข LTV
+            </label>
+            <FormattedNumberInput
+              value={form.propertyValue || 0}
+              onChange={(v) => setForm({ ...form, propertyValue: v })}
+              min={0}
+              prefix="฿"
+              placeholder="เช่น 2,500,000"
+              className="[&_input]:input-dark [&_input]:text-sm [&_input]:font-bold"
+            />
+          </div>
+        </div>
+
+        {/* Balance / rate / tenure (editable, synced from selected loan) */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">ยอดหนี้บ้านคงเหลือ (บาท)</label>
+            <FormattedNumberInput
+              value={form.existingBalance || 0}
+              onChange={(v) => setForm({ ...form, existingBalance: v })}
+              min={0}
+              prefix="฿"
+              placeholder="1,000,000"
+              className="[&_input]:input-dark [&_input]:text-sm [&_input]:font-bold [&_input]:text-indigo-600"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">ดอกเบี้ยปัจจุบัน (% ต่อปี)</label>
+            <FormattedNumberInput
+              value={form.currentRate || 0}
+              onChange={(v) => setForm({ ...form, currentRate: v })}
+              min={0}
+              step={0.01}
+              suffix="%"
+              placeholder="6.0"
+              className="[&_input]:input-dark [&_input]:text-sm [&_input]:font-bold [&_input]:text-rose-600"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">ระยะเวลาผ่อนคงเหลือ (เดือน)</label>
+            <FormattedNumberInput
+              value={form.remainingTenureMonths || 0}
+              onChange={(v) => setForm({ ...form, remainingTenureMonths: v })}
+              min={1}
+              suffix="เดือน"
+              placeholder="180"
+              className="[&_input]:input-dark [&_input]:text-sm [&_input]:font-bold [&_input]:text-amber-600"
+            />
+          </div>
+        </div>
+
+        {/* 2. Occupation (master data) */}
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
+            <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">2</span>
+            <Briefcase className="w-3.5 h-3.5 text-indigo-600" />
+            อาชีพ (จากข้อมูล Master)
+          </label>
+          <select
+            value={form.occupation}
+            onChange={(e) => setForm({ ...form, occupation: e.target.value })}
+            className="input-dark text-sm cursor-pointer w-full"
+          >
+            {occupationOptions.map(opt => (
+              <option key={opt.key} value={opt.key}>{opt.label}</option>
+            ))}
+          </select>
+          {form.occupation === 'other' && (
+            <input
+              type="text"
+              placeholder="ระบุอาชีพของคุณ..."
+              value={form.customOccupation || ''}
+              onChange={(e) => setForm({ ...form, customOccupation: e.target.value })}
+              className="input-dark text-sm mt-2"
+            />
+          )}
+        </div>
+
+        {/* 3. Monthly income */}
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
+            <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">3</span>
+            <Banknote className="w-3.5 h-3.5 text-emerald-600" />
+            รายได้ต่อเดือน (บาท)
+          </label>
+          <FormattedNumberInput
+            value={form.monthlyIncome || 0}
+            onChange={(v) => setForm({ ...form, monthlyIncome: v })}
+            min={0}
+            prefix="฿"
+            placeholder="30,000"
+            className="[&_input]:input-dark [&_input]:text-sm [&_input]:font-bold [&_input]:text-emerald-600"
+          />
+        </div>
+
+        {/* 4. Province (77 provinces) */}
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
+            <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">4</span>
+            <MapPin className="w-3.5 h-3.5 text-emerald-600" />
+            จังหวัดที่ตั้งบ้าน (77 จังหวัด)
+          </label>
+          <select
+            value={form.province || ''}
+            onChange={(e) => setForm({ ...form, province: e.target.value })}
+            className="input-dark text-sm cursor-pointer w-full"
+          >
+            <option value="">— เลือกจังหวัด —</option>
+            {THAI_PROVINCES.map(p => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+          {provinceInfo && (
+            <p className="text-[11px] text-amber-700 font-bold mt-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+              📍 {form.province}: {provinceInfo.label} {provinceInfo.modifier > 0 ? `(+${provinceInfo.modifier}%)` : '(อัตราต่ำสุด)'}
+            </p>
+          )}
+        </div>
+
+        {/* 5. Top-up / cash-out → target loan amount */}
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
+            <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">5</span>
+            <Target className="w-3.5 h-3.5 text-indigo-600" />
+            เงินเพิ่ม (Top-up / Cash-out) — ยอดกู้เป้าหมาย
+          </label>
+          <FormattedNumberInput
+            value={form.topUpAmount || 0}
+            onChange={(v) => setForm({ ...form, topUpAmount: v })}
+            min={0}
+            prefix="฿"
+            placeholder="0"
+            className="[&_input]:input-dark [&_input]:text-sm [&_input]:font-bold [&_input]:text-indigo-600"
+          />
+          <div className="mt-2 flex items-center gap-2 bg-indigo-50/80 border border-indigo-100 rounded-xl px-3 py-2 text-xs font-bold text-indigo-800">
+            <Building2 className="w-4 h-4 text-indigo-600" />
+            ยอดกู้เป้าหมาย (target_loan_amount) =
+            <span className="text-indigo-900">฿{(Number(form.existingBalance) || 0).toLocaleString()}</span>
+            + <span className="text-indigo-900">฿{(Number(form.topUpAmount) || 0).toLocaleString()}</span>
+            = <span className="text-indigo-900 font-black">{formatBaht((Number(form.existingBalance) || 0) + (Number(form.topUpAmount) || 0))}</span>
+          </div>
+        </div>
+
+        {/* 6. MRTA option */}
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
+            <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">6</span>
+            <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
+            ประกัน MRTA
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            {MRTA_OPTIONS.map(opt => (
+              <button
+                key={String(opt.value)}
+                type="button"
+                onClick={() => setForm({ ...form, wantMRTA: opt.value })}
+                className={`text-left p-3 rounded-xl border-2 transition-all cursor-pointer ${
+                  form.wantMRTA === opt.value
+                    ? 'border-indigo-500 bg-indigo-50/60 shadow-sm'
+                    : 'border-slate-200 bg-white hover:border-indigo-300'
+                }`}
+              >
+                <div className="text-sm font-bold text-slate-900">{opt.label}</div>
+                <div className="text-[11px] text-slate-500 mt-0.5">{opt.desc}</div>
               </button>
+            ))}
+          </div>
+        </div>
+
+        {error && (
+          <div className="bg-rose-50 text-rose-700 border border-rose-200 rounded-xl px-3.5 py-2.5 text-xs font-bold flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" /> {error}
+          </div>
+        )}
+      </div>
+
+      {/* ============ SMART BEST-MATCH: SINGLE CARD ============ */}
+      {loadingData ? (
+        <div className="bg-white p-10 rounded-2xl border border-slate-200 shadow-sm text-center">
+          <RefreshCw className="w-6 h-6 animate-spin mx-auto text-indigo-600" />
+          <p className="text-xs text-slate-400 font-bold mt-3">กำลังโหลดโปรโมชันจากฐานข้อมูล...</p>
+        </div>
+      ) : showBestCard ? (
+        <div className="bg-white rounded-2xl border-2 border-emerald-300 shadow-md overflow-hidden">
+          {/* Card header */}
+          <div className="bg-gradient-to-r from-emerald-500 to-emerald-600 px-6 py-4 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-white">
+              <Trophy className="w-5 h-5" />
+              <span className="text-sm font-black uppercase tracking-wider">แพ็กเกจที่คุ้มที่สุดสำหรับคุณ (Best Match)</span>
             </div>
-            {message && (
-              <div className={`mt-4 text-xs font-bold rounded-xl px-3.5 py-2.5 ${
-                message.startsWith('✅')
-                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                  : 'bg-rose-50 text-rose-700 border border-rose-200'
-              }`}>
-                {message}
-              </div>
-            )}
+            <span className="text-[10px] font-black bg-white/20 text-white px-2.5 py-1 rounded-full">
+              จาก {bestMatch.eligibleCount} แพ็กเกจที่ผ่านเกณฑ์
+            </span>
           </div>
 
-          {/* Interactive document checklist */}
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
-              <div>
-                <span className="badge-gold">
-                  <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
-                  Walk-in Submission Checklist
-                </span>
-                <h3 className="text-lg font-bold text-slate-900 pt-1.5">รายการเอกสารสำหรับยื่นที่สาขา</h3>
-                <p className="text-xs text-slate-500 font-medium mt-0.5">
-                  ตามอาชีพ: {OCCUPATION_LABELS[form.occupation]} — กาเครื่องหมายเมื่อเตรียมเอกสารครบ
-                </p>
+          <div className="p-6 space-y-4">
+            {/* Bank + product */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <BankLogo bankShort={getBankShort(best.bank_name)} logoUrl="" size={44} />
+                <div>
+                  <div className="text-lg font-black text-slate-900">{best.bank_name}</div>
+                  <div className="text-xs text-slate-500 font-medium">{best.product_name}</div>
+                  {best.styleName && (
+                    <span className="inline-block mt-1 text-[10px] font-black bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full">
+                      {best.styleName}
+                    </span>
+                  )}
+                </div>
               </div>
-              <div className="text-right">
-                <span className="text-2xl font-black text-indigo-600">{checkedCount}/{requiredDocs.length}</span>
-                <span className="block text-[10px] text-slate-500 font-bold">เตรียมเอกสารแล้ว</span>
+              {best.promo_image_url && (
+                <img
+                  src={best.promo_image_url}
+                  alt={`แบนเนอร์ ${best.bank_name}`}
+                  className="w-28 h-16 object-contain rounded-lg border border-slate-200 bg-slate-50"
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                />
+              )}
+            </div>
+
+            {/* Key numbers */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="bg-indigo-50/70 border border-indigo-100 rounded-xl p-3">
+                <div className="text-[10px] text-slate-500 font-bold uppercase">ค่างวดต่อเดือน</div>
+                <div className="text-lg font-black text-indigo-700">{formatBaht(best.newMonthly)}</div>
+                <div className="text-[10px] font-bold text-emerald-600">
+                  {best.monthlyDelta > 0 ? `ลดลง ${formatBaht(best.monthlyDelta)}/เดือน` : 'เท่าเดิม'}
+                </div>
+              </div>
+              <div className="bg-rose-50/70 border border-rose-100 rounded-xl p-3">
+                <div className="text-[10px] text-slate-500 font-bold uppercase">ดอกเบี้ยเฉลี่ย 3 ปี</div>
+                <div className="text-lg font-black text-rose-600">{best.rate3YAvg}%</div>
+                <div className="text-[10px] text-slate-400 font-medium">
+                  {best.year1Rate > 0 ? `ปีแรก ${best.year1Rate}%` : ''}{best.year2_3Rate > 0 ? ` • ปี 2-3 ${best.year2_3Rate}%` : ''}
+                </div>
+              </div>
+              <div className="bg-emerald-50/70 border border-emerald-100 rounded-xl p-3">
+                <div className="text-[10px] text-slate-500 font-bold uppercase">ประหยัดดอกเบี้ย 3 ปี</div>
+                <div className={`text-lg font-black ${best.grossSavings > 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
+                  {formatBaht(Math.max(0, best.grossSavings))}
+                </div>
+                <div className="text-[10px] text-slate-400 font-medium">สุทธิหลังหักค่าธรรมเนียม {formatBaht(Math.max(0, best.netSavings))}</div>
+              </div>
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                <div className="text-[10px] text-slate-500 font-bold uppercase">ยอดกู้เป้าหมาย</div>
+                <div className="text-lg font-black text-slate-900">{formatBaht(bestMatch.targetLoanAmount)}</div>
+                <div className="text-[10px] text-slate-400 font-medium">ค่าธรรมเนียมโอน ~{formatBaht(best.feesTotal)}</div>
               </div>
             </div>
 
-            <div className="space-y-3 mt-4">
-              {requiredDocs.map(doc => {
-                const checked = !!checklist[doc.id];
-                return (
-                  <button
-                    key={doc.id}
-                    onClick={() => toggleDoc(doc.id)}
-                    className={`w-full text-left flex items-start gap-3 p-3.5 rounded-xl border transition-all cursor-pointer ${
-                      checked
-                        ? 'bg-emerald-50/70 border-emerald-300'
-                        : 'bg-slate-50/60 border-slate-200 hover:border-indigo-300'
-                    }`}
-                  >
-                    {checked
-                      ? <CheckSquare className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
-                      : <Square className="w-5 h-5 text-slate-400 flex-shrink-0 mt-0.5" />}
-                    <span>
-                      <span className={`text-sm font-bold flex items-center gap-2 ${checked ? 'text-emerald-800 line-through' : 'text-slate-900'}`}>
-                        {doc.label}
-                        <span className={`text-[9px] px-2 py-0.5 rounded-full font-black ${
-                          doc.required ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-500 border border-slate-200'
-                        }`}>
-                          {doc.required ? 'จำเป็น' : 'ถ้ามี'}
-                        </span>
-                      </span>
-                      <span className="block text-[11px] text-slate-500 font-medium mt-0.5">{doc.description}</span>
-                    </span>
-                  </button>
-                );
-              })}
+            {/* Matched perks + variant details */}
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 flex flex-wrap items-center gap-2 text-[11px] font-bold text-slate-600">
+              <Percent className="w-3.5 h-3.5 text-indigo-600" />
+              {best.wantMRTAMatched ? '🛡️ เงื่อนไข MRTA ตรงกับที่คุณเลือก' : (best.variant?.is_mrta ? '🛡️ เงื่อนไข MRTA' : 'ไม่ต้องทำ MRTA')}
+              {best.mrrFormula && <span className="bg-white border border-slate-200 px-2 py-0.5 rounded-lg">หลังปี 3: {best.mrrFormula}</span>}
+              {best.eir > 0 && <span className="bg-white border border-slate-200 px-2 py-0.5 rounded-lg">EIR {best.eir}%</span>}
+              {(best.fee_waivers || []).length > 0 && (
+                <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-lg border border-emerald-300">
+                  🎁 สิทธิพิเศษ: ฟรี{best.fee_waivers.join(' + ')}
+                </span>
+              )}
+              {best.max_ltv_percent > 0 && (
+                <span className="bg-white border border-slate-200 px-2 py-0.5 rounded-lg">LTV ≤ {best.max_ltv_percent}%</span>
+              )}
             </div>
+
+            {/* CTA: external redirect */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-slate-100">
+              <p className="text-[11px] text-slate-500 font-medium">
+                ผ่านเกณฑ์: รายได้ ≥ {best.min_income > 0 ? `฿${best.min_income.toLocaleString()}/เดือน` : 'ไม่กำหนด'}
+                {best.min_loan_tier > 0 ? ` • วงเงิน ≥ ฿${best.min_loan_tier.toLocaleString()}` : ' • ทุกขนาดวงเงิน'}
+              </p>
+              {best.bank_ref_link ? (
+                <a
+                  href={best.bank_ref_link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-gold text-xs font-black py-3 px-6 flex items-center gap-2 shadow-md cursor-pointer"
+                >
+                  สมัครที่เว็บไซต์{best.bank_name.replace('ธนาคาร', '')}
+                  <ExternalLink className="w-4 h-4" />
+                </a>
+              ) : (
+                <span className="text-[11px] text-slate-400 font-medium">ยังไม่มีลิงก์เว็บไซต์ธนาคาร (ให้แอดมินเพิ่มในหลังบ้าน)</span>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* Fallback: manual empty form + alert (no eligible promo / parse failed) */
+        <div className="bg-white rounded-2xl border-2 border-amber-300 shadow-sm p-6 space-y-4">
+          <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl p-4">
+            <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <h3 className="text-sm font-black text-amber-800">
+                {promotions.length === 0
+                  ? 'ยังไม่มีข้อมูลโปรโมชันในระบบ'
+                  : bestMatch && bestMatch.eligibleCount === 0
+                    ? 'ไม่พบแพ็กเกจที่คุณผ่านเกณฑ์'
+                    : 'ข้อมูลแพ็กเกจยังไม่ครบถ้วน'}
+              </h3>
+              <p className="text-xs text-amber-700 font-medium mt-1">
+                {promotions.length === 0
+                  ? 'กรุณาให้แอดมินอัปโหลดแบนเนอร์โปรโมชันในหลังบ้าน หรือลองกด "รีเฟรช" อีกครั้ง'
+                  : 'ลองปรับรายได้ วงเงิน หรือตัวเลือก MRTA — หรือกรอกแบบฟอร์มว่างด้านล่างเพื่อติดต่อธนาคารโดยตรง'}
+              </p>
+            </div>
+          </div>
+
+          {/* Manual empty form render */}
+          <div className="space-y-3">
+            <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">แบบฟอร์มแจ้งข้อมูลเพื่อติดต่อธนาคาร (กรอกเอง)</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                <div className="text-[10px] text-slate-500 font-bold">ยอดกู้เป้าหมาย</div>
+                <div className="text-sm font-black text-slate-900">{formatBaht((Number(form.existingBalance) || 0) + (Number(form.topUpAmount) || 0))}</div>
+              </div>
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                <div className="text-[10px] text-slate-500 font-bold">รายได้ต่อเดือน</div>
+                <div className="text-sm font-black text-slate-900">฿{(Number(form.monthlyIncome) || 0).toLocaleString()}</div>
+              </div>
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                <div className="text-[10px] text-slate-500 font-bold">อาชีพ</div>
+                <div className="text-sm font-black text-slate-900">{selectedOccupationLabel}</div>
+              </div>
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                <div className="text-[10px] text-slate-500 font-bold">จังหวัด / MRTA</div>
+                <div className="text-sm font-black text-slate-900">{form.province || '-'} • {form.wantMRTA ? 'ทำ MRTA' : 'ไม่ทำ MRTA'}</div>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-500 font-medium">
+              💡 พิมพ์ข้อมูลด้านบนแนบไปยื่นที่สาขา หรือรอแอดมินเพิ่มโปรโมชันก่อนกลับมาคำนวณใหม่
+            </p>
           </div>
         </div>
       )}
 
       {/* Disclaimer */}
       <div className="text-[11px] text-slate-400 font-medium bg-white/60 border border-slate-200 rounded-xl px-4 py-3 leading-relaxed">
-        ⚠️ {calculation?.meta.disclaimer || 'อัตราดอกเบี้ยและโปรโมชันเป็นข้อมูลอ้างอิงในแอป ควรยืนยันกับธนาคารก่อนยื่นกู้'}
+        ⚠️ อัตราดอกเบี้ยและโปรโมชันเป็นข้อมูลอ้างอิงจากฐานข้อมูลแอดมิน ควรยืนยันเงื่อนไขกับธนาคารก่อนยื่นกู้จริง
+        การคำนวณค่างวดใช้แบบแผน amortization มาตรฐาน (36 เดือนแรก)
       </div>
     </div>
   );

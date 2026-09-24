@@ -94,7 +94,7 @@ export function useBankOffers() {
       .sort((a, b) => Number(a.avg3YearRate) - Number(b.avg3YearRate));
   }, [offers]);
 
-  // Lowest target interest rate for Debt Consolidation
+  // Lowest target interest rate across current offers
   const lowestRate = useMemo(() => {
     return bestOffer ? Number(bestOffer.avg3YearRate) : 3.25;
   }, [bestOffer]);

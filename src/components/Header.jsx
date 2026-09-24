@@ -12,8 +12,7 @@ import {
   ChevronRight,
   ChevronLeft,
   Trophy,
-  Landmark,
-  Layers
+  Landmark
 } from 'lucide-react';
 
 /** Sidebar nav items (reference web app labels + our extra modules). */
@@ -25,7 +24,6 @@ const NAV_ITEMS = [
   { id: 'ai', label: 'ผู้ช่วยการเงิน', short: 'AI', icon: Bot, also: [] },
   { id: 'notifications', label: 'การแจ้งเตือน', short: 'แจ้งเตือน', icon: Bell, also: [] },
   { id: 'refinance', label: 'รีไฟแนนซ์', short: 'รีไฟแนนซ์', icon: Landmark, also: [], adminOnly: false },
-  { id: 'consolidation', label: 'รวมหนี้', short: 'รวมหนี้', icon: Layers, also: [], adminOnly: false },
   { id: 'admin', label: 'หลังบ้าน Admin', short: 'Admin', icon: ShieldCheck, also: [], adminOnly: true }
 ];
 
@@ -41,8 +39,7 @@ const TAB_TITLES = {
   admin: 'หลังบ้าน Admin',
   milestones: 'ความสำเร็จและรางวัล',
   add_debt: 'เพิ่ม / แก้ไขหนี้',
-  refinance: 'รีไฟแนนซ์',
-  consolidation: 'รวมหนี้'
+  refinance: 'รีไฟแนนซ์'
 };
 
 export default function Header({

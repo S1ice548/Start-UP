@@ -28,13 +28,27 @@ import {
   FileSpreadsheet,
   Clipboard,
   Layers,
-  CheckCheck
+  CheckCheck,
+  AlertTriangle,
+  Briefcase
 } from 'lucide-react';
 import { INITIAL_ADMIN_DATA, MOCK_USERS, loadUserDataFromStorage, saveUserDataToStorage } from '../data/mockData';
 import { formatCurrency } from '../utils/debtEngine';
 import { exportAdminAllUsersPaymentLogsToExcel } from '../utils/excelExport';
-import { extractRefinancePromoFromImage, batchExtractRefinancePromos, normalizeBankName } from '../services/geminiService';
-import { getPromotions, savePromotion, deletePromotion } from '../services/refinancePromotionService';
+import { extractRefinancePromoFromImage, batchExtractRefinancePromos, normalizeBankName, applyMatrixToFormFields } from '../services/geminiService';
+import RateMatrixGrid from './RateMatrixGrid';
+import { normalizeRateMatrix } from '../types/rateMatrix';
+import {
+  getPromotions, savePromotion, deletePromotion, uploadPromoImage,
+  getOccupations, saveOccupation, deleteOccupation,
+  PROPERTY_TYPES, FEE_WAIVER_TYPES, CUSTOMER_TYPES
+} from '../services/refinancePromotionService';
+
+/** Loan-tier presets for the tier selector (>=3M vs any). */
+const LOAN_TIERS = [
+  { value: 0, label: 'ทุกขนาดวงเงิน (< 3 ล้านบาท)' },
+  { value: 3000000, label: '3 ล้านบาทขึ้นไป (>=3M)' }
+];
 
 const THAI_BANKS = [
   'ธนาคารกรุงศรีอยุธยา',
@@ -53,16 +67,38 @@ const INITIAL_FORM_STATE = {
   id: '',
   bank_name: 'ธนาคารกรุงศรีอยุธยา',
   product_name: '',
+  property_types: [],
   min_income: 15000,
+  customer_type: 'พนักงานประจำ',
+  target_loan_amount: 0,
+  min_loan_tier: 0,
+  min_loan_amount: 0,
+  max_loan_amount: 0,
+  max_ltv_percent: 0,
   avg_3yr_rate: 2.99,
   year_1_rate: '',
   year_2_3_rate: '',
   after_year_3_rate: '',
   is_mrta: false,
   is_free_mortgage_fee: false,
+  fee_waivers: [],
+  variants: [],
+  rate_matrix: [],
   promo_image_url: '',
   bank_ref_link: ''
 };
+
+/** Empty variant row for the manual variants editor. */
+const emptyVariant = (style = 1) => ({
+  style,
+  style_name: `ทางเลือกที่ ${style}`,
+  is_mrta: false,
+  year_1_rate: '',
+  year_2_3_rate: '',
+  after_year_3_rate: '',
+  mrr_formula: '',
+  eir: 0
+});
 
 export default function AdminDashboard({ onRefreshView, showToast: globalShowToast }) {
   const adminData = INITIAL_ADMIN_DATA;
@@ -82,6 +118,10 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [aiStatusMessage, setAiStatusMessage] = useState('');
   const [notification, setNotification] = useState(null);
+  // Gemini Vision parse-failure flag -> renders the manual empty-form fallback
+  const [extractionFailed, setExtractionFailed] = useState(false);
+  // Promotion row whose rate-matrix grid is expanded in the DB table
+  const [expandedMatrixId, setExpandedMatrixId] = useState(null);
 
   // User Debt Management State
   const [managedUserId, setManagedUserId] = useState('user1');
@@ -94,9 +134,15 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
   const [formRate, setFormRate] = useState('');
   const [formMin, setFormMin] = useState('');
 
-  // Load promotions on mount
+  // Occupations master list state (admin CRUD)
+  const [occupations, setOccupations] = useState([]);
+  const [occForm, setOccForm] = useState({ id: '', key: '', label: '', labelEn: '', allowed: true });
+  const [showOccForm, setShowOccForm] = useState(false);
+
+  // Load promotions + occupations on mount
   useEffect(() => {
     loadPromotionsList();
+    loadOccupationsList();
   }, []);
 
   // Reload managed user data when managedUserId changes
@@ -260,25 +306,73 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
   };
 
   // Apply Extracted Data to Form (data binding from Gemini Vision JSON -> form inputs)
+  // Sets extractionFailed=true when the AI response has no usable rates so the
+  // fallback UI (manual empty form + alert) can render.
   const applyExtractedToForm = (extracted, previewUrl, refLink) => {
-    if (!extracted) return;
+    if (!extracted) {
+      setExtractionFailed(true);
+      return;
+    }
+    // Normalize + backfill promo-level fields from the best matrix row
+    const enriched = applyMatrixToFormFields(extracted);
+    const rateMatrix = normalizeRateMatrix(enriched.rate_matrix);
+    const hasAnyRate = (Number(enriched.avg_3yr_rate) || 0) > 0 ||
+      (Array.isArray(enriched.variants) && enriched.variants.length > 0) ||
+      rateMatrix.length > 0;
+    setExtractionFailed(!hasAnyRate);
+    const variants = Array.isArray(enriched.variants)
+      ? enriched.variants.map((v, i) => ({
+          style: Number(v.style) || (i + 1),
+          style_name: v.style_name || `ทางเลือกที่ ${Number(v.style) || i + 1}`,
+          is_mrta: Boolean(v.is_mrta),
+          year_1_rate: v.year_1_rate || '',
+          year_2_3_rate: v.year_2_3_rate || '',
+          after_year_3_rate: v.after_year_3_rate || '',
+          mrr_formula: v.mrr_formula || '',
+          eir: Number(v.eir) || 0
+        }))
+      : [];
     setPromoForm(prev => ({
       ...prev,
       // Normalize AI bank name (e.g. "Krungsri" / "กรุงศรี") to the canonical Thai bank list
-      bank_name: normalizeBankName(extracted.bank_name) || prev.bank_name,
-      product_name: extracted.product_name || prev.product_name,
-      // Use explicit null/undefined checks so AI values of 0 still overwrite the form
-      min_income: (extracted.min_income !== undefined && extracted.min_income !== null)
-        ? (Number(extracted.min_income) || 0)
+      bank_name: normalizeBankName(enriched.bank_name) || prev.bank_name,
+      product_name: enriched.product_name || prev.product_name,
+      // Structured condition arrays (already canonical from the server)
+      property_types: Array.isArray(enriched.property_types) ? enriched.property_types : prev.property_types,
+      customer_type: enriched.customer_type || prev.customer_type,
+      min_income: (enriched.min_income !== undefined && enriched.min_income !== null)
+        ? (Number(enriched.min_income) || 0)
         : prev.min_income,
-      avg_3yr_rate: (extracted.avg_3yr_rate !== undefined && extracted.avg_3yr_rate !== null)
-        ? (Number(extracted.avg_3yr_rate) || 0)
+      target_loan_amount: (enriched.target_loan_amount !== undefined && enriched.target_loan_amount !== null)
+        ? (Number(enriched.target_loan_amount) || 0)
+        : prev.target_loan_amount,
+      min_loan_tier: (enriched.min_loan_tier !== undefined && enriched.min_loan_tier !== null)
+        ? (Number(enriched.min_loan_tier) || 0)
+        : prev.min_loan_tier,
+      min_loan_amount: (enriched.min_loan_amount !== undefined && enriched.min_loan_amount !== null)
+        ? (Number(enriched.min_loan_amount) || 0)
+        : prev.min_loan_amount,
+      max_loan_amount: (enriched.max_loan_amount !== undefined && enriched.max_loan_amount !== null)
+        ? (Number(enriched.max_loan_amount) || 0)
+        : prev.max_loan_amount,
+      max_ltv_percent: (enriched.max_ltv_percent !== undefined && enriched.max_ltv_percent !== null)
+        ? (Number(enriched.max_ltv_percent) || 0)
+        : prev.max_ltv_percent,
+      avg_3yr_rate: (enriched.avg_3yr_rate !== undefined && enriched.avg_3yr_rate !== null)
+        ? (Number(enriched.avg_3yr_rate) || 0)
         : prev.avg_3yr_rate,
-      year_1_rate: extracted.year_1_rate || prev.year_1_rate,
-      year_2_3_rate: extracted.year_2_3_rate || prev.year_2_3_rate,
-      after_year_3_rate: extracted.after_year_3_rate || prev.after_year_3_rate,
-      is_mrta: extracted.is_mrta !== undefined ? Boolean(extracted.is_mrta) : prev.is_mrta,
-      is_free_mortgage_fee: extracted.is_free_mortgage_fee !== undefined ? Boolean(extracted.is_free_mortgage_fee) : prev.is_free_mortgage_fee,
+      year_1_rate: enriched.year_1_rate || prev.year_1_rate,
+      year_2_3_rate: enriched.year_2_3_rate || prev.year_2_3_rate,
+      after_year_3_rate: enriched.after_year_3_rate || prev.after_year_3_rate,
+      is_mrta: enriched.is_mrta !== undefined ? Boolean(enriched.is_mrta) : prev.is_mrta,
+      fee_waivers: Array.isArray(enriched.fee_waivers)
+        ? enriched.fee_waivers
+        : prev.fee_waivers,
+      is_free_mortgage_fee: Array.isArray(enriched.fee_waivers) && enriched.fee_waivers.length > 0
+        ? enriched.fee_waivers.includes('จดจำนอง')
+        : (enriched.is_free_mortgage_fee !== undefined ? Boolean(enriched.is_free_mortgage_fee) : prev.is_free_mortgage_fee),
+      variants: variants.length > 0 ? variants : prev.variants,
+      rate_matrix: rateMatrix,
       promo_image_url: previewUrl || prev.promo_image_url,
       bank_ref_link: refLink || extracted.bank_ref_link || prev.bank_ref_link
     }));
@@ -368,9 +462,11 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
 
     try {
       for (const item of itemsToSave) {
+        // Upload each banner to backend storage -> short /uploads/ URL in DB
+        const storedImageUrl = await uploadPromoImage(item.preview);
         const promoToSave = {
           ...item.extractedData,
-          promo_image_url: item.preview,
+          promo_image_url: storedImageUrl,
           bank_ref_link: item.bank_ref_link || item.extractedData.bank_ref_link || ''
         };
         await savePromotion(promoToSave);
@@ -391,7 +487,10 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
     if (!promoForm.product_name.trim()) return showNotification('⚠️ กรุณาระบุชื่อแพ็กเกจ/โปรโมชัน', 'error');
 
     try {
-      await savePromotion(promoForm);
+      // Upload inline banner images (data URLs) to the backend storage first —
+      // the DB stores a compact /uploads/xxx.png URL instead of a huge base64 blob.
+      const storedImageUrl = await uploadPromoImage(promoForm.promo_image_url);
+      await savePromotion({ ...promoForm, promo_image_url: storedImageUrl });
       showNotification('✅ บันทึกโปรโมชันดอกเบี้ยลง Database เรียบร้อยแล้ว!');
       setPromoForm(INITIAL_FORM_STATE);
       loadPromotionsList();
@@ -401,7 +500,7 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
   };
 
   const handleEditPromo = (promo) => {
-    setPromoForm(promo);
+    setPromoForm({ ...INITIAL_FORM_STATE, ...promo, variants: Array.isArray(promo.variants) ? promo.variants : [] });
     window.scrollTo({ top: 350, behavior: 'smooth' });
   };
 
@@ -415,6 +514,88 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
         showNotification(`❌ ไม่สามารถลบข้อมูลได้: ${err.message}`, 'error');
       }
     }
+  };
+
+  // ---------- Occupations Master CRUD Handlers ----------
+  const loadOccupationsList = async () => {
+    try {
+      const data = await getOccupations();
+      setOccupations(data);
+    } catch (err) {
+      console.error('Failed to load occupations:', err);
+    }
+  };
+
+  const handleSaveOccupation = async (e) => {
+    e.preventDefault();
+    if (!occForm.label.trim()) {
+      return showNotification('⚠️ กรุณาระบุชื่ออาชีพ (ภาษาไทย)', 'error');
+    }
+    try {
+      await saveOccupation(occForm);
+      showNotification('✅ บันทึกอาชีพใน Master List เรียบร้อยแล้ว!');
+      setOccForm({ id: '', key: '', label: '', labelEn: '', allowed: true });
+      setShowOccForm(false);
+      loadOccupationsList();
+    } catch (err) {
+      showNotification(`❌ บันทึกอาชีพไม่สำเร็จ: ${err.message}`, 'error');
+    }
+  };
+
+  const handleDeleteOccupation = async (id) => {
+    if (window.confirm('คุณต้องการลบอาชีพนี้ออกจาก Master List หรือไม่?')) {
+      try {
+        await deleteOccupation(id);
+        showNotification('🗑️ ลบอาชีพเรียบร้อยแล้ว');
+        loadOccupationsList();
+      } catch (err) {
+        showNotification(`❌ ลบอาชีพไม่สำเร็จ: ${err.message}`, 'error');
+      }
+    }
+  };
+
+  // ---------- Rate Matrix helpers ----------
+  /** Expand/collapse the read-only matrix grid under a promotion row. */
+  const toggleMatrixRow = (promoId) => {
+    setExpandedMatrixId(prev => (prev === promoId ? null : promoId));
+  };
+
+  /** Handle matrix edits from the in-form grid. */
+  const handleRateMatrixChange = (rows) => {
+    setPromoForm(prev => ({ ...prev, rate_matrix: rows }));
+    // Keep the promo-level avg in sync with the best (lowest) matrix row
+    const best = [...rows].sort((a, b) => (Number(a.avg_3yr_rate) || 99) - (Number(b.avg_3yr_rate) || 99))[0];
+    if (best && Number(best.avg_3yr_rate) > 0) {
+      setPromoForm(f => ({
+        ...f,
+        avg_3yr_rate: Number(best.avg_3yr_rate) || f.avg_3yr_rate,
+        year_1_rate: best.year_1_rate || f.year_1_rate,
+        year_2_3_rate: best.year_2_3_rate || f.year_2_3_rate,
+        after_year_3_rate: best.after_year_3_rate || f.after_year_3_rate
+      }));
+    }
+  };
+
+  // ---------- Variants editor helpers ----------
+  const addVariantRow = () => {
+    setPromoForm(prev => ({
+      ...prev,
+      variants: [...(prev.variants || []), emptyVariant((prev.variants?.length || 0) + 1)]
+    }));
+  };
+
+  const removeVariantRow = (idx) => {
+    setPromoForm(prev => ({
+      ...prev,
+      variants: (prev.variants || []).filter((_, i) => i !== idx)
+    }));
+  };
+
+  const updateVariantRow = (idx, field, value) => {
+    setPromoForm(prev => ({
+      ...prev,
+      variants: (prev.variants || []).map((v, i) => i === idx ? { ...v, [field]: value } : v)
+    }));
   };
 
   // User Debt Management Handlers
@@ -626,6 +807,18 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
         >
           <UserCheck className="w-4 h-4" />
           จัดการผู้ใช้และหนี้สิน (User & Debt Management)
+        </button>
+
+        <button
+          onClick={() => setActiveTab('occupations')}
+          className={`pb-3 px-4 text-sm font-extrabold border-b-2 flex items-center gap-2 transition-all cursor-pointer whitespace-nowrap ${
+            activeTab === 'occupations'
+              ? 'border-indigo-600 text-indigo-600'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          <Briefcase className="w-4 h-4" />
+          อาชีพ Master List (Occupations)
         </button>
 
         <button
@@ -925,6 +1118,143 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
                   />
                 </div>
 
+                {/* Loan Tier (>=3M vs any) */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    เกณฑ์วงเงินกู้ขั้นต่ำ (min_loan_tier)
+                  </label>
+                  <select
+                    value={promoForm.min_loan_tier}
+                    onChange={(e) => setPromoForm({ ...promoForm, min_loan_tier: Number(e.target.value) })}
+                    className="input-dark text-xs py-2 w-full bg-white font-medium"
+                  >
+                    {LOAN_TIERS.map(tier => (
+                      <option key={tier.value} value={tier.value}>{tier.label}</option>
+                    ))}
+                    {!LOAN_TIERS.some(t => t.value === Number(promoForm.min_loan_tier)) && (
+                      <option value={promoForm.min_loan_tier}>
+                        {Number(promoForm.min_loan_tier).toLocaleString()} บาท (กำหนดเอง)
+                      </option>
+                    )}
+                  </select>
+                </div>
+
+                {/* Target loan amount (banner's reference amount) */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    วงเงินอ้างอิงในแบนเนอร์ (target_loan_amount) (บาท)
+                  </label>
+                  <input
+                    type="number"
+                    step="100000"
+                    placeholder="0 = ไม่ระบุ"
+                    value={promoForm.target_loan_amount}
+                    onChange={(e) => setPromoForm({ ...promoForm, target_loan_amount: Number(e.target.value) })}
+                    className="input-dark text-xs py-2 w-full"
+                  />
+                </div>
+
+                {/* Property types (multi-select chips) */}
+                <div className="sm:col-span-2 md:col-span-3">
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    ประเภทหลักประกันที่รับ (property_types) — ใช้สำหรับ Smart Matching แบบเข้มงวด
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {PROPERTY_TYPES.map(type => {
+                      const selected = (promoForm.property_types || []).includes(type);
+                      return (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => {
+                            setPromoForm(prev => ({
+                              ...prev,
+                              property_types: selected
+                                ? (prev.property_types || []).filter(t => t !== type)
+                                : [...(prev.property_types || []), type]
+                            }));
+                          }}
+                          className={`text-[11px] font-bold px-3 py-1.5 rounded-full border-2 transition-all cursor-pointer ${
+                            selected
+                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                              : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-300'
+                          }`}
+                        >
+                          {selected ? '✓ ' : ''}{type}
+                        </button>
+                      );
+                    })}
+                    {(promoForm.property_types || []).length === 0 && (
+                      <span className="text-[10px] text-amber-700 font-bold bg-amber-50 border border-amber-200 px-2 py-1 rounded-lg">
+                        ไม่เลือกเลย = รับทุกประเภททรัพย์
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Customer type */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    ประเภทลูกค้าที่รับ (customer_type)
+                  </label>
+                  <select
+                    value={promoForm.customer_type || 'ทุกประเภท'}
+                    onChange={(e) => setPromoForm({ ...promoForm, customer_type: e.target.value })}
+                    className="input-dark text-xs py-2 w-full bg-white font-medium"
+                  >
+                    {CUSTOMER_TYPES.map(ct => (
+                      <option key={ct} value={ct}>{ct}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Min loan amount */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    วงเงินกู้ขั้นต่ำ (min_loan_amount) (บาท)
+                  </label>
+                  <input
+                    type="number"
+                    step="100000"
+                    placeholder="0 = ไม่กำหนด"
+                    value={promoForm.min_loan_amount}
+                    onChange={(e) => setPromoForm({ ...promoForm, min_loan_amount: Number(e.target.value) })}
+                    className="input-dark text-xs py-2 w-full"
+                  />
+                </div>
+
+                {/* Max loan amount */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    วงเงินกู้สูงสุด (max_loan_amount) (บาท)
+                  </label>
+                  <input
+                    type="number"
+                    step="100000"
+                    placeholder="0 = ไม่จำกัด"
+                    value={promoForm.max_loan_amount}
+                    onChange={(e) => setPromoForm({ ...promoForm, max_loan_amount: Number(e.target.value) })}
+                    className="input-dark text-xs py-2 w-full"
+                  />
+                </div>
+
+                {/* Max LTV */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    LTV สูงสุด (max_ltv_percent) (%)
+                  </label>
+                  <input
+                    type="number"
+                    step="1"
+                    min="0"
+                    max="100"
+                    placeholder="เช่น 85 / 90 / 95 (0 = ไม่ระบุ)"
+                    value={promoForm.max_ltv_percent}
+                    onChange={(e) => setPromoForm({ ...promoForm, max_ltv_percent: Number(e.target.value) })}
+                    className="input-dark text-xs py-2 w-full"
+                  />
+                </div>
+
                 {/* Avg 3Yr Rate */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1 text-rose-600">
@@ -990,11 +1320,19 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
                   </label>
                   <input
                     type="text"
-                    placeholder="https://example.com/banner.jpg"
+                    placeholder="https://example.com/banner.jpg หรือ /uploads/promo-xxx.png (อัปโหลดอัตโนมัติเมื่อบันทึก)"
                     value={promoForm.promo_image_url}
                     onChange={(e) => setPromoForm({ ...promoForm, promo_image_url: e.target.value })}
                     className="input-dark text-xs py-2 w-full"
                   />
+                  {promoForm.promo_image_url && (
+                    <img
+                      src={promoForm.promo_image_url}
+                      alt="Banner preview"
+                      className="mt-2 h-16 rounded-lg border border-slate-200 object-cover"
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                    />
+                  )}
                 </div>
               </div>
 
@@ -1025,6 +1363,174 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
                     <span className="text-[10px] text-slate-500 block">ธนาคารออกค่าจดจำนองให้ 1% ของวงเงินกู้</span>
                   </div>
                 </label>
+              </div>
+
+              {/* GEMINI PARSE FAILURE -> MANUAL EMPTY FORM FALLBACK */}
+              {extractionFailed && (
+                <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 space-y-3">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="text-xs font-black text-amber-800">
+                        ⚠️ Gemini Vision วิเคราะห์รูปไม่สำเร็จ หรือไม่พบอัตราดอกเบี้ยที่อ่านได้
+                      </h4>
+                      <p className="text-[11px] text-amber-700 font-medium mt-0.5">
+                        ระบบเตรียมแบบฟอร์มว่างให้กรอกเองด้านล่างแล้ว — ตรวจสอบตัวเลขจากแบนเนอร์ต้นทางแล้วบันทึกเมื่อครบ
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setExtractionFailed(false)}
+                    className="btn-secondary text-[11px] py-1.5 px-3 font-bold cursor-pointer"
+                  >
+                    รับทราบ — จะกรอกเอง
+                  </button>
+                </div>
+              )}
+
+              {/* FEE WAIVERS (multi-select chips) */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
+                <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                  <CheckCheck className="w-4 h-4 text-emerald-600" />
+                  ค่าธรรมเนียมที่ธนาคารฟรีให้ (fee_waivers) — แสดงเป็น badge ในตาราง + ใช้คำนวณค่าธรรมเนียมจริง
+                </h4>
+                <div className="flex flex-wrap gap-2">
+                  {FEE_WAIVER_TYPES.map(fee => {
+                    const selected = (promoForm.fee_waivers || []).includes(fee);
+                    return (
+                      <button
+                        key={fee}
+                        type="button"
+                        onClick={() => {
+                          setPromoForm(prev => {
+                            const next = selected
+                              ? (prev.fee_waivers || []).filter(f => f !== fee)
+                              : [...(prev.fee_waivers || []), fee];
+                            return {
+                              ...prev,
+                              fee_waivers: next,
+                              // Keep the free-mortgage-fee flag in sync with the waiver list
+                              is_free_mortgage_fee: next.includes('จดจำนอง')
+                            };
+                          });
+                        }}
+                        className={`text-[11px] font-bold px-3 py-1.5 rounded-full border-2 transition-all cursor-pointer ${
+                          selected
+                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                            : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-300'
+                        }`}
+                      >
+                        {selected ? '✓ ' : ''}{fee}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* RATE MATRIX GRID — the AI-extracted condition rows, editable cell-by-cell */}
+              <RateMatrixGrid
+                matrix={promoForm.rate_matrix}
+                onChange={handleRateMatrixChange}
+                highlight={bannerQueue[activeQueueIndex]?.status === 'EXTRACTED'}
+                title="ตารางเงื่อนไขดอกเบี้ยรายแถว (Rate Matrix) — ตรวจสอบกับรูปแบนเนอร์แล้วคลิกแก้ไขได้ทุกเซลล์"
+              />
+
+              {/* VARIANTS EDITOR (style 1-4 with MRTA condition, MRR formula, EIR) */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                      <Layers className="w-4 h-4 text-indigo-600" />
+                      ตารางทางเลือกย่อย (variants[] — สไตล์ 1-4, เงื่อนไข MRTA, สูตร MRR, EIR)
+                    </h4>
+                    <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                      สำหรับแบนเนอร์ตารางหลายแถว เช่น ทางเลือกที่ 1-2 มี MRTA / ทางเลือกที่ 3-4 ไม่มี MRTA
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addVariantRow}
+                    className="btn-secondary text-[11px] py-1.5 px-3 font-bold cursor-pointer flex items-center gap-1"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> เพิ่มทางเลือก
+                  </button>
+                </div>
+
+                {(promoForm.variants || []).length === 0 ? (
+                  <p className="text-[11px] text-slate-400 font-medium">
+                    ยังไม่มีทางเลือกย่อย — ระบบจะใช้ดอกเบี้ยเฉลี่ย 3 ปีด้านบนเป็นค่าเริ่มต้น (แบนเนอร์ดอกเบี้ยเดียวไม่ต้องเพิ่ม)
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {promoForm.variants.map((variant, idx) => (
+                      <div key={idx} className="bg-white border border-slate-200 rounded-xl p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-black text-indigo-700">
+                            สไตล์ที่ {variant.style || idx + 1}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={!!variant.is_mrta}
+                                onChange={(e) => updateVariantRow(idx, 'is_mrta', e.target.checked)}
+                                className="w-3.5 h-3.5 cursor-pointer"
+                              />
+                              ต้องทำ MRTA
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => removeVariantRow(idx)}
+                              className="p-1 text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
+                              title="ลบทางเลือกนี้"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                          <input
+                            type="text"
+                            placeholder="ชื่อทางเลือก"
+                            value={variant.style_name || ''}
+                            onChange={(e) => updateVariantRow(idx, 'style_name', e.target.value)}
+                            className="input-dark text-[11px] py-1.5"
+                          />
+                          <input
+                            type="text"
+                            placeholder="ปีที่ 1 เช่น 1.49%"
+                            value={variant.year_1_rate || ''}
+                            onChange={(e) => updateVariantRow(idx, 'year_1_rate', e.target.value)}
+                            className="input-dark text-[11px] py-1.5"
+                          />
+                          <input
+                            type="text"
+                            placeholder="ปีที่ 2-3 เช่น 2.49%"
+                            value={variant.year_2_3_rate || ''}
+                            onChange={(e) => updateVariantRow(idx, 'year_2_3_rate', e.target.value)}
+                            className="input-dark text-[11px] py-1.5"
+                          />
+                          <input
+                            type="text"
+                            placeholder="MRR เช่น MRR - 2.00%"
+                            value={variant.mrr_formula || ''}
+                            onChange={(e) => updateVariantRow(idx, 'mrr_formula', e.target.value)}
+                            className="input-dark text-[11px] py-1.5"
+                          />
+                          <input
+                            type="number"
+                            step="0.01"
+                            placeholder="EIR %"
+                            value={variant.eir || 0}
+                            onChange={(e) => updateVariantRow(idx, 'eir', Number(e.target.value) || 0)}
+                            className="input-dark text-[11px] py-1.5"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Action Buttons */}
@@ -1087,10 +1593,23 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
                     {promotions.map((promo) => (
-                      <tr key={promo.id} className="hover:bg-slate-50 transition-colors">
+                      <React.Fragment key={promo.id}>
+                      <tr className="hover:bg-slate-50 transition-colors">
                         <td className="py-3 px-4">
-                          <div className="font-extrabold text-slate-900">{promo.bank_name}</div>
-                          <div className="text-[11px] text-indigo-600 font-medium">{promo.product_name}</div>
+                          <div className="flex items-center gap-2.5">
+                            {promo.promo_image_url ? (
+                              <img
+                                src={promo.promo_image_url}
+                                alt={`แบนเนอร์ ${promo.bank_name}`}
+                                className="w-16 h-10 object-cover rounded-lg border border-slate-200 bg-white flex-shrink-0"
+                                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                              />
+                            ) : null}
+                            <div className="min-w-0">
+                              <div className="font-extrabold text-slate-900">{promo.bank_name}</div>
+                              <div className="text-[11px] text-indigo-600 font-medium">{promo.product_name}</div>
+                            </div>
+                          </div>
                         </td>
                         <td className="py-3 px-4 text-center">
                           <span className="text-base font-black text-rose-600 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200 inline-block">
@@ -1098,25 +1617,65 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
                           </span>
                         </td>
                         <td className="py-3 px-4 font-bold text-slate-800">
-                          {promo.min_income > 0 ? `${promo.min_income.toLocaleString()} ฿` : 'ไม่กำหนดขั้นต่ำ'}
+                          <div>{promo.min_income > 0 ? `${promo.min_income.toLocaleString()} ฿` : 'ไม่กำหนดขั้นต่ำ'}</div>
+                          {promo.customer_type && promo.customer_type !== 'ทุกประเภท' && (
+                            <div className="text-[10px] text-slate-500 font-medium">👤 {promo.customer_type}</div>
+                          )}
                         </td>
                         <td className="py-3 px-4 space-y-1">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            {promo.is_mrta && (
+                            {promo.is_mrta ? (
                               <span className="bg-purple-50 text-purple-700 text-[10px] font-bold px-2 py-0.5 rounded border border-purple-200">
-                                MRTA Required
+                                🛡️ MRTA Required
+                              </span>
+                            ) : (
+                              <span className="bg-slate-50 text-slate-500 text-[10px] font-bold px-2 py-0.5 rounded border border-slate-200">
+                                ไม่บังคับ MRTA
                               </span>
                             )}
-                            {promo.is_free_mortgage_fee && (
-                              <span className="bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded border border-emerald-200">
-                                ฟรีค่าจดจำนอง 1%
+                            {(promo.fee_waivers || []).map(fee => (
+                              <span key={fee} className="bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded border border-emerald-200">
+                                ฟรี{fee}
+                              </span>
+                            ))}
+                            {(promo.property_types || []).length > 0 && (
+                              <span className="bg-indigo-50 text-indigo-700 text-[10px] font-bold px-2 py-0.5 rounded border border-indigo-200">
+                                🏠 {(promo.property_types || []).join(', ')}
+                              </span>
+                            )}
+                            {Number(promo.max_ltv_percent) > 0 && (
+                              <span className="bg-amber-50 text-amber-700 text-[10px] font-bold px-2 py-0.5 rounded border border-amber-200">
+                                LTV ≤ {promo.max_ltv_percent}%
+                              </span>
+                            )}
+                            {(Number(promo.min_loan_amount) > 0 || Number(promo.max_loan_amount) > 0) && (
+                              <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded border border-slate-200">
+                                วงเงิน {Number(promo.min_loan_amount) > 0 ? `${(promo.min_loan_amount / 1000000).toLocaleString()}M` : '0'}
+                                {'–'}
+                                {Number(promo.max_loan_amount) > 0 ? `${(promo.max_loan_amount / 1000000).toLocaleString()}M` : '∞'}
                               </span>
                             )}
                           </div>
                           <div className="text-[10px] text-slate-400">
                             {promo.year_1_rate && `ปีแรก: ${promo.year_1_rate}`}
+                            {promo.year_2_3_rate && ` | ปี 2-3: ${promo.year_2_3_rate}`}
                             {promo.after_year_3_rate && ` | หลังจากนั้น: ${promo.after_year_3_rate}`}
                           </div>
+                          {(promo.variants || []).length > 0 && (
+                            <div className="text-[10px] text-indigo-500 font-bold">
+                              + {promo.variants.length} ทางเลือกย่อย (สไตล์ 1-{promo.variants.length})
+                            </div>
+                          )}
+                          {(normalizeRateMatrix(promo.rate_matrix).length > 0) && (
+                            <button
+                              type="button"
+                              onClick={() => toggleMatrixRow(promo.id)}
+                              className="mt-1 text-[10px] font-black text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 px-2 py-0.5 rounded flex items-center gap-1 cursor-pointer"
+                            >
+                              <Table2 className="w-3 h-3" />
+                              {expandedMatrixId === promo.id ? 'ซ่อนตารางเมทริกซ์' : `ดูตารางเงื่อนไข (${normalizeRateMatrix(promo.rate_matrix).length} แถว)`}
+                            </button>
+                          )}
                         </td>
                         <td className="py-3 px-4">
                           {promo.bank_ref_link ? (
@@ -1151,6 +1710,17 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
                           </div>
                         </td>
                       </tr>
+                      {expandedMatrixId === promo.id && (
+                        <tr>
+                          <td colSpan={7} className="px-4 py-3 bg-indigo-50/40 border-b border-indigo-100">
+                            <RateMatrixGrid
+                              matrix={promo.rate_matrix}
+                              title={`ตารางเงื่อนไขดอกเบี้ย — ${promo.bank_name} / ${promo.product_name}`}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                      </React.Fragment>
                     ))}
                   </tbody>
                 </table>
@@ -1158,6 +1728,168 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
             )}
           </div>
 
+        </div>
+      )}
+
+      {/* ==================== TAB 1.5: OCCUPATIONS MASTER CRUD ==================== */}
+      {activeTab === 'occupations' && (
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+            <div>
+              <span className="badge-gold text-xs">
+                <Briefcase className="w-3.5 h-3.5" />
+                OCCUPATIONS MASTER LIST
+              </span>
+              <h2 className="text-lg font-black text-slate-900 pt-1">
+                จัดการรายชื่ออาชีพหลัก (Master Occupations)
+              </h2>
+              <p className="text-xs text-slate-500 font-medium">
+                รายชื่ออาชีพนี้จะแสดงใน dropdown ของฟอร์มรีไฟแนนซ์สำหรับผู้ใช้ทุกคน
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setOccForm({ id: '', key: '', label: '', labelEn: '', allowed: true });
+                setShowOccForm(true);
+              }}
+              className="btn-gold text-xs py-2.5 px-4 font-bold cursor-pointer flex items-center gap-1.5 self-start"
+            >
+              <Plus className="w-4 h-4" />
+              เพิ่มอาชีพใหม่
+            </button>
+          </div>
+
+          {showOccForm && (
+            <form onSubmit={handleSaveOccupation} className="bg-indigo-50/60 border border-indigo-200 rounded-xl p-4 space-y-3">
+              <h3 className="text-xs font-black text-indigo-900">
+                {occForm.id ? '✏️ แก้ไขอาชีพ' : '➕ เพิ่มอาชีพใหม่'}
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">ชื่ออาชีพ (ไทย) *</label>
+                  <input
+                    type="text"
+                    value={occForm.label}
+                    onChange={(e) => setOccForm({ ...occForm, label: e.target.value })}
+                    className="input-dark text-xs py-2 w-full"
+                    placeholder="เช่น ครู / พยาบาล"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">ชื่อภาษาอังกฤษ (labelEn)</label>
+                  <input
+                    type="text"
+                    value={occForm.labelEn}
+                    onChange={(e) => setOccForm({ ...occForm, labelEn: e.target.value })}
+                    className="input-dark text-xs py-2 w-full"
+                    placeholder="เช่น Teacher / Nurse"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Key (ระบบ)</label>
+                  <input
+                    type="text"
+                    value={occForm.key}
+                    onChange={(e) => setOccForm({ ...occForm, key: e.target.value })}
+                    className="input-dark text-xs py-2 w-full"
+                    placeholder="เช่น teacher (เว้นว่าง = สร้างอัตโนมัติ)"
+                    disabled={Boolean(occForm.id)}
+                  />
+                </div>
+                <div className="flex items-end">
+                  <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer p-2">
+                    <input
+                      type="checkbox"
+                      checked={occForm.allowed}
+                      onChange={(e) => setOccForm({ ...occForm, allowed: e.target.checked })}
+                      className="w-4 h-4 cursor-pointer"
+                    />
+                    เปิดใช้งาน (แสดงในฟอร์มผู้ใช้)
+                  </label>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowOccForm(false)}
+                  className="btn-secondary text-xs py-2 px-4 cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button type="submit" className="btn-gold text-xs py-2 px-5 font-bold cursor-pointer">
+                  บันทึกอาชีพ
+                </button>
+              </div>
+            </form>
+          )}
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-bold uppercase tracking-wider">
+                  <th className="py-2.5 px-3">ชื่ออาชีพ (ไทย)</th>
+                  <th className="py-2.5 px-3">English</th>
+                  <th className="py-2.5 px-3">Key</th>
+                  <th className="py-2.5 px-3 text-center">สถานะ</th>
+                  <th className="py-2.5 px-3 text-center">จัดการ</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
+                {occupations.length === 0 ? (
+                  <tr>
+                    <td colSpan="5" className="py-6 text-center text-slate-400">
+                      ยังไม่มีรายชื่ออาชีพ — กด "เพิ่มอาชีพใหม่" เพื่อสร้าง
+                    </td>
+                  </tr>
+                ) : (
+                  occupations.map((occ) => (
+                    <tr key={occ.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="py-2.5 px-3 font-bold text-slate-900">{occ.label}</td>
+                      <td className="py-2.5 px-3 text-slate-600">{occ.labelEn || '-'}</td>
+                      <td className="py-2.5 px-3 font-mono text-[11px] text-indigo-600">{occ.key}</td>
+                      <td className="py-2.5 px-3 text-center">
+                        <span className={`text-[10px] font-black px-2 py-0.5 rounded border ${
+                          occ.allowed !== false
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : 'bg-slate-100 text-slate-500 border-slate-200'
+                        }`}>
+                          {occ.allowed !== false ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => {
+                              setOccForm({
+                                id: occ.id,
+                                key: occ.key || '',
+                                label: occ.label || '',
+                                labelEn: occ.labelEn || '',
+                                allowed: occ.allowed !== false
+                              });
+                              setShowOccForm(true);
+                            }}
+                            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg cursor-pointer"
+                            title="แก้ไขอาชีพ"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteOccupation(occ.id)}
+                            className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
+                            title="ลบอาชีพ"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

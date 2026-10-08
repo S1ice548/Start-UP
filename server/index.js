@@ -261,6 +261,173 @@ function normalizeOccupation(input) {
   };
 }
 
+/* ---------------- Users & User Profiles DB ---------------- */
+const USERS_FILE = process.env.USERS_DB_FILE || path.join(DATA_DIR, 'users.json');
+const USER_PROFILES_FILE = process.env.USER_PROFILES_DB_FILE || path.join(DATA_DIR, 'user_profiles.json');
+
+const USER_SEED = [
+  { id: 'admin', username: 'admin', email: 'admin@neenoi.com', password: 'admin123', name: 'Admin User', role: 'admin', created_at: 0 },
+  { id: 'user1', username: 'user1', email: 'user1@neenoi.com', password: 'user123', name: 'User 1', role: 'user', created_at: 0 },
+  { id: 'user2', username: 'user2', email: 'user2@neenoi.com', password: 'user234', name: 'User 2', role: 'user', created_at: 0 },
+  { id: 'user3', username: 'user3', email: 'user3@neenoi.com', password: 'user345', name: 'User 3', role: 'user', created_at: 0 }
+];
+
+const USER_PROFILE_SEED = [
+  { id: 'admin', user_id: 'admin', gender: 'ชาย', age: 35, occupation: 'ผู้ดูแลระบบ', created_at: 0 },
+  { id: 'user1', user_id: 'user1', gender: 'ชาย', age: 30, occupation: 'พนักงานเงินเดือน', created_at: 0 },
+  { id: 'user2', user_id: 'user2', gender: 'หญิง', age: 28, occupation: 'เจ้าของกิจการ / ธุรกิจ', created_at: 0 },
+  { id: 'user3', user_id: 'user3', gender: 'ชาย', age: 42, occupation: 'ข้าราชการ / พนักงานรัฐวิสาหกิจ', created_at: 0 }
+];
+
+function readUsers() {
+  try {
+    if (!fs.existsSync(USERS_FILE)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(USERS_FILE, JSON.stringify(USER_SEED, null, 2), 'utf8');
+      return [...USER_SEED];
+    }
+    const parsed = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+    return Array.isArray(parsed) ? parsed : [...USER_SEED];
+  } catch (err) {
+    console.error('[server] Failed to read users DB:', err.message);
+    return [...USER_SEED];
+  }
+}
+
+function writeUsers(users) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const tmpFile = USERS_FILE + '.tmp';
+  fs.writeFileSync(tmpFile, JSON.stringify(users, null, 2), 'utf8');
+  fs.renameSync(tmpFile, USERS_FILE);
+}
+
+function readUserProfiles() {
+  try {
+    if (!fs.existsSync(USER_PROFILES_FILE)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(USER_PROFILES_FILE, JSON.stringify(USER_PROFILE_SEED, null, 2), 'utf8');
+      return [...USER_PROFILE_SEED];
+    }
+    const parsed = JSON.parse(fs.readFileSync(USER_PROFILES_FILE, 'utf8'));
+    return Array.isArray(parsed) ? parsed : [...USER_PROFILE_SEED];
+  } catch (err) {
+    console.error('[server] Failed to read user_profiles DB:', err.message);
+    return [...USER_PROFILE_SEED];
+  }
+}
+
+function writeUserProfiles(profiles) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const tmpFile = USER_PROFILES_FILE + '.tmp';
+  fs.writeFileSync(tmpFile, JSON.stringify(profiles, null, 2), 'utf8');
+  fs.renameSync(tmpFile, USER_PROFILES_FILE);
+}
+
+/* ---------------- Debts DB & Normalization ---------------- */
+const DEBTS_FILE = process.env.DEBTS_DB_FILE || path.join(DATA_DIR, 'debts.json');
+
+const DEBT_SEED = [
+  {
+    id: "debt-1",
+    user_id: "user1",
+    bank_name: "ธนาคารกรุงไทย (KTC)",
+    creditor: "ธนาคารกรุงไทย (KTC)",
+    lender: "ธนาคารกรุงไทย (KTC)",
+    debt_name: "บัตรเครดิต KTC Visa",
+    name: "บัตรเครดิต KTC Visa",
+    debt_type: "บัตรเครดิต",
+    category: "credit_card",
+    current_balance: 32000,
+    balance: 32000,
+    interest_rate_percent: 16.0,
+    interestRate: 16.0,
+    min_monthly_payment: 2500,
+    minPayment: 2500,
+    due_day: 15,
+    dueDate: "15 ของทุกเดือน",
+    entry_method: "manual",
+    isScanned: false,
+    updated_at: 0
+  },
+  {
+    id: "debt-2",
+    user_id: "user1",
+    bank_name: "ธนาคารไทยพาณิชย์ (SCB)",
+    creditor: "ธนาคารไทยพาณิชย์ (SCB)",
+    lender: "ธนาคารไทยพาณิชย์",
+    debt_name: "สินเชื่อส่วนบุคคล SCB Speedy",
+    name: "สินเชื่อส่วนบุคคล SCB Speedy",
+    debt_type: "สินเชื่อส่วนบุคคล",
+    category: "personal_loan",
+    current_balance: 85000,
+    balance: 85000,
+    interest_rate_percent: 24.5,
+    interestRate: 24.5,
+    min_monthly_payment: 3800,
+    minPayment: 3800,
+    due_day: 28,
+    dueDate: "28 ของทุกเดือน",
+    entry_method: "manual",
+    isScanned: false,
+    updated_at: 0
+  }
+];
+
+function readDebts() {
+  try {
+    if (!fs.existsSync(DEBTS_FILE)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(DEBTS_FILE, JSON.stringify(DEBT_SEED, null, 2), 'utf8');
+      return [...DEBT_SEED];
+    }
+    const parsed = JSON.parse(fs.readFileSync(DEBTS_FILE, 'utf8'));
+    return Array.isArray(parsed) ? parsed : [...DEBT_SEED];
+  } catch (err) {
+    console.error('[server] Failed to read debts DB:', err.message);
+    return [...DEBT_SEED];
+  }
+}
+
+function writeDebts(debts) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const tmpFile = DEBTS_FILE + '.tmp';
+  fs.writeFileSync(tmpFile, JSON.stringify(debts, null, 2), 'utf8');
+  fs.renameSync(tmpFile, DEBTS_FILE);
+}
+
+function normalizeDebt(input) {
+  const bank = String(input.bank_name || input.creditor || input.lender || 'อื่นๆ').trim();
+  const name = String(input.debt_name || input.name || `รายการหนี้ ${bank}`).trim();
+  const type = String(input.debt_type || input.category || 'บัตรเครดิต').trim();
+  const balance = Number(input.current_balance ?? input.balance ?? 0);
+  const rate = Number(input.interest_rate_percent ?? input.interestRate ?? 0);
+  const minPay = Number(input.min_monthly_payment ?? input.minPayment ?? 0);
+  const dueDay = parseInt(input.due_day || (input.dueDate ? (String(input.dueDate).match(/\d+/)||[15])[0] : 15), 10);
+
+  return {
+    id: String(input.id || `debt-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+    user_id: String(input.user_id || 'user1').trim(),
+    bank_name: bank,
+    creditor: bank,
+    lender: bank,
+    debt_name: name,
+    name: name,
+    debt_type: type,
+    category: type === 'บัตรเครดิต' ? 'credit_card' : type === 'สินเชื่อส่วนบุคคล' ? 'personal_loan' : type === 'สินเชื่อบ้าน' ? 'mortgage' : type === 'สินเชื่อรถยนต์' ? 'auto_loan' : 'other',
+    current_balance: balance,
+    balance: balance,
+    interest_rate_percent: rate,
+    interestRate: rate,
+    min_monthly_payment: minPay,
+    minPayment: minPay,
+    due_day: dueDay,
+    dueDate: `${dueDay} ของทุกเดือน`,
+    entry_method: String(input.entry_method || 'manual').trim(),
+    isScanned: Boolean(input.isScanned),
+    updated_at: Date.now()
+  };
+}
+
 /* ---------------- Banner image upload (server-side file storage) ---------------- */
 // Storing raw base64 data URLs inside promotions.json bloats the DB file and
 // slows every read/write. Instead the admin form uploads the banner once and
@@ -649,10 +816,12 @@ async function analyzeWithGeminiVision(body) {
     base64 = m[2];
   }
 
-  // gemini-2.0-flash was retired (Sept 2026); default to the current flash model.
-  const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  const payload = JSON.stringify({
+  // Use gemini-3.6-flash (Flash) as the primary model. The 1.5 series is
+  // deprecated and returns 404 — gemini-3.6-flash is the current active endpoint.
+  const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+  const fallbackModel = 'gemini-3.6-flash';
+
+  const makePayload = () => JSON.stringify({
     contents: [{
       parts: [
         { text: PROMO_ANALYSIS_PROMPT },
@@ -662,30 +831,56 @@ async function analyzeWithGeminiVision(body) {
     generationConfig: { temperature: 0.1, responseMimeType: 'application/json' }
   });
 
-  // Retry transient Gemini failures (429 rate-limit / 5xx overloaded) with backoff.
-  const TRANSIENT_STATUSES = new Set([429, 500, 502, 503]);
+  const sendRequest = async (modelName) => {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    return await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: makePayload(),
+      signal: AbortSignal.timeout(90000)
+    });
+  };
+
+  const isHighDemandOrRateLimit = (status, text) => {
+    if (status === 503 || status === 429) return true;
+    if (text && /503|429|high demand|rate limit|resource_exhausted|overloaded|unavailable|too many requests/i.test(text)) return true;
+    return false;
+  };
+
   let res;
   let lastError = null;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: payload,
-        // Vision calls can be slow, but never hang forever (90s cap)
-        signal: AbortSignal.timeout(90000)
-      });
-      lastError = null;
-      if (!TRANSIENT_STATUSES.has(res.status)) break;
-    } catch (fetchErr) {
-      lastError = fetchErr; // timeout / network error -> retry
-    }
-    if (attempt < 3) {
-      const delayMs = 2000 * attempt; // 2s, 4s
-      console.warn(`[server] Gemini attempt ${attempt} failed (transient) — retrying in ${delayMs}ms`);
-      await new Promise(r => setTimeout(r, delayMs));
+
+  try {
+    res = await sendRequest(primaryModel);
+  } catch (err) {
+    lastError = err;
+  }
+
+  let data = res ? await res.json().catch(() => null) : null;
+  let textContent = data ? JSON.stringify(data) : (lastError ? lastError.message : '');
+
+  // If primary model returned 503 / 429 High Demand / Rate limit or failed, retry once with the Flash model
+  if (!res || !res.ok || isHighDemandOrRateLimit(res?.status, textContent)) {
+    if (!res || isHighDemandOrRateLimit(res?.status, textContent) || (lastError && isHighDemandOrRateLimit(0, lastError.message))) {
+      console.warn(`[server] Primary model (${primaryModel}) high demand/error (${res?.status || lastError?.message}). Falling back to ${fallbackModel}...`);
+      try {
+        const fallbackRes = await sendRequest(fallbackModel);
+        const fallbackData = await fallbackRes.json().catch(() => null);
+        if (fallbackRes.ok && fallbackData) {
+          res = fallbackRes;
+          data = fallbackData;
+          lastError = null;
+        } else if (fallbackRes) {
+          res = fallbackRes;
+          data = fallbackData;
+        }
+      } catch (fallbackErr) {
+        console.warn(`[server] Fallback model (${fallbackModel}) error:`, fallbackErr.message);
+        if (!res) lastError = fallbackErr;
+      }
     }
   }
+
   if (lastError && !res) {
     const message = lastError.name === 'TimeoutError' || lastError.name === 'AbortError'
       ? 'Gemini Vision request timed out after 90s'
@@ -693,10 +888,11 @@ async function analyzeWithGeminiVision(body) {
     throw Object.assign(new Error(message), { status: 504 });
   }
 
-  const data = await res.json().catch(() => null);
   if (!res.ok) {
     const message = data?.error?.message || `Gemini API HTTP ${res.status}`;
-    throw Object.assign(new Error(`Gemini Vision error: ${message}`), { status: 502 });
+    const highDemand = isHighDemandOrRateLimit(res.status, message);
+    const statusCode = highDemand ? 503 : 502;
+    throw Object.assign(new Error(`Gemini Vision error: ${message}`), { status: statusCode });
   }
 
   const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text).filter(Boolean).join('') || '';
@@ -876,6 +1072,240 @@ const server = http.createServer(async (req, res) => {
       }
       writeOccupations(filtered);
       return sendJson(res, 200, { ok: true, deletedId: id });
+    }
+
+    /* ---- Auth & User Profiles Endpoints ---- */
+    if (route === '/api/auth/signup' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const username = String(body.username || '').trim();
+      const password = String(body.password || '');
+      const gender = String(body.gender || '').trim();
+      const ageNum = Number(body.age);
+      const occupation = String(body.occupation || '').trim();
+
+      if (!username) {
+        return sendJson(res, 400, { ok: false, error: 'กรุณากรอกชื่อผู้ใช้ (Username)' });
+      }
+      if (!password) {
+        return sendJson(res, 400, { ok: false, error: 'กรุณากรอกรหัสผ่าน (Password)' });
+      }
+      if (!gender) {
+        return sendJson(res, 400, { ok: false, error: 'กรุณาเลือกเพศ' });
+      }
+      if (isNaN(ageNum) || ageNum <= 0) {
+        return sendJson(res, 400, { ok: false, error: 'อายุต้องมากกว่า 0' });
+      }
+      if (!occupation) {
+        return sendJson(res, 400, { ok: false, error: 'กรุณาระบุอาชีพ' });
+      }
+
+      const users = readUsers();
+      const existingUser = users.find(u => u.username.toLowerCase() === username.toLowerCase());
+      if (existingUser) {
+        return sendJson(res, 400, { ok: false, error: 'ชื่อผู้ใช้นี้ถูกใช้งานแล้ว' });
+      }
+
+      const newUserId = `usr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const newUser = {
+        id: newUserId,
+        username,
+        password,
+        name: username,
+        email: `${username}@neenoi.com`,
+        role: 'user',
+        created_at: Date.now()
+      };
+
+      const newProfile = {
+        id: newUserId,
+        user_id: newUserId,
+        gender,
+        age: ageNum,
+        occupation,
+        created_at: Date.now()
+      };
+
+      users.push(newUser);
+      writeUsers(users);
+
+      const profiles = readUserProfiles();
+      profiles.push(newProfile);
+      writeUserProfiles(profiles);
+
+      return sendJson(res, 201, {
+        ok: true,
+        user: {
+          id: newUser.id,
+          username: newUser.username,
+          name: newUser.name,
+          email: newUser.email,
+          role: newUser.role,
+          profile: newProfile
+        }
+      });
+    }
+
+    if (route === '/api/auth/login' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const username = String(body.username || '').trim();
+      const password = String(body.password || '');
+
+      if (!username || !password) {
+        return sendJson(res, 400, { ok: false, error: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' });
+      }
+
+      const users = readUsers();
+      const matchedUser = users.find(
+        u => (u.username.toLowerCase() === username.toLowerCase() || (u.email && u.email.toLowerCase() === username.toLowerCase()))
+          && u.password === password
+      );
+
+      if (!matchedUser) {
+        return sendJson(res, 401, { ok: false, error: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
+      }
+
+      const profiles = readUserProfiles();
+      const userProfile = profiles.find(p => p.user_id === matchedUser.id || p.id === matchedUser.id) || null;
+
+      return sendJson(res, 200, {
+        ok: true,
+        user: {
+          id: matchedUser.id,
+          username: matchedUser.username,
+          name: matchedUser.name || matchedUser.username,
+          email: matchedUser.email || `${matchedUser.username}@neenoi.com`,
+          role: matchedUser.role || 'user',
+          profile: userProfile
+        }
+      });
+    }
+
+    if (route === '/api/user-profiles' && req.method === 'GET') {
+      const userId = url.searchParams.get('user_id') || url.searchParams.get('id');
+      const profiles = readUserProfiles();
+      if (userId) {
+        const found = profiles.find(p => p.user_id === userId || p.id === userId);
+        if (!found) {
+          return sendJson(res, 404, { ok: false, error: 'User profile not found' });
+        }
+        return sendJson(res, 200, { ok: true, profile: found });
+      }
+      return sendJson(res, 200, { ok: true, profiles });
+    }
+
+    /* ---- Debts CRUD & Text Parser ---- */
+    if (route === '/api/debts' && req.method === 'GET') {
+      const userId = url.searchParams.get('user_id');
+      const allDebts = readDebts();
+      const userDebts = (userId && userId !== 'all') ? allDebts.filter(d => d.user_id === userId) : allDebts;
+      return sendJson(res, 200, { ok: true, debts: userDebts });
+    }
+
+    if (route === '/api/debts' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const balanceNum = Number(body.current_balance ?? body.balance);
+      const rateNum = Number(body.interest_rate_percent ?? body.interestRate);
+      const minPayNum = Number(body.min_monthly_payment ?? body.minPayment);
+
+      if (isNaN(balanceNum) || balanceNum <= 0) {
+        return sendJson(res, 400, { ok: false, error: 'current_balance must be greater than 0' });
+      }
+      if (isNaN(rateNum) || rateNum < 0) {
+        return sendJson(res, 400, { ok: false, error: 'interest_rate_percent cannot be negative' });
+      }
+      if (isNaN(minPayNum) || minPayNum <= 0) {
+        return sendJson(res, 400, { ok: false, error: 'min_monthly_payment must be greater than 0' });
+      }
+
+      const debts = readDebts();
+      const normalized = normalizeDebt(body);
+      const idx = debts.findIndex(d => d.id === normalized.id);
+      if (idx >= 0) {
+        debts[idx] = { ...debts[idx], ...normalized };
+      } else {
+        debts.unshift(normalized);
+      }
+      writeDebts(debts);
+      return sendJson(res, 200, { ok: true, debt: normalized });
+    }
+
+    if (route === '/api/debts' && req.method === 'DELETE') {
+      const id = url.searchParams.get('id');
+      if (!id) return sendJson(res, 400, { ok: false, error: 'Missing ?id= parameter' });
+      const debts = readDebts();
+      const filtered = debts.filter(d => d.id !== id);
+      if (filtered.length === debts.length) {
+        return sendJson(res, 404, { ok: false, error: `Debt ${id} not found` });
+      }
+      writeDebts(filtered);
+      return sendJson(res, 200, { ok: true, deletedId: id });
+    }
+
+    if (route === '/api/debts/parse-text' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const text = String(body.text || '').trim();
+      if (!text) {
+        return sendJson(res, 400, { ok: false, error: 'text is required' });
+      }
+
+      // Simple regex parser fallback for server
+      let bank_name = 'อื่นๆ';
+      if (/กสิกร|kbank/i.test(text)) bank_name = 'ธนาคารกสิกรไทย (KBank)';
+      else if (/ไทยพาณิชย์|scb/i.test(text)) bank_name = 'ธนาคารไทยพาณิชย์ (SCB)';
+      else if (/ktc|กรุงไทย/i.test(text)) bank_name = 'บัตรเครดิต KTC';
+      else if (/กรุงศรี|krungsri/i.test(text)) bank_name = 'ธนาคารกรุงศรีอยุธยา (Krungsri)';
+      else if (/กรุงเทพ|bbl/i.test(text)) bank_name = 'ธนาคารกรุงเทพ (BBL)';
+      else if (/ทหารไทย|ธนชาต|ttb/i.test(text)) bank_name = 'ธนาคารทหารไทยธนชาต (ttb)';
+      else if (/ออมสิน|gsb/i.test(text)) bank_name = 'ธนาคารออมสิน (GSB)';
+      else if (/ธอส|อาคารสงเคราะห์|ghb/i.test(text)) bank_name = 'ธนาคารอาคารสงเคราะห์ (ธอส)';
+      else if (/cimb/i.test(text)) bank_name = 'ธนาคารซีไอเอ็มบี ไทย (CIMBT)';
+      else if (/ยูโอบี|uob/i.test(text)) bank_name = 'ธนาคารยูโอบี (UOB)';
+      else if (/aeon|อิออน/i.test(text)) bank_name = 'อิออน (AEON)';
+      else if (/first choice|เฟิร์สช้อยส์/i.test(text)) bank_name = 'เฟิร์สช้อยส์ (Krungsri First Choice)';
+      else if (/central/i.test(text)) bank_name = 'เซ็นทรัล เดอะวัน (Central The 1)';
+
+      let debt_type = 'บัตรเครดิต';
+      if (/บ้าน|mortgage|home loan/i.test(text)) debt_type = 'สินเชื่อบ้าน';
+      else if (/รถยนต์|รถ|auto loan|car loan/i.test(text)) debt_type = 'สินเชื่อรถยนต์';
+      else if (/ส่วนบุคคล|personal loan|xpress loan|speedy/i.test(text)) debt_type = 'สินเชื่อส่วนบุคคล';
+
+      let current_balance = 0;
+      const bMatch = text.match(/(?:ยอดคงเหลือ|ยอดรวม|ยอดหนี้|ยอดชำระทั้งสิ้น|total balance|balance|amount due)[^\d]*([\d,]+(?:\.\d+)?)/i)
+        || text.match(/([\d,]+(?:\.\d+)?)\s*(?:บาท|thb)/i);
+      if (bMatch) current_balance = parseFloat(bMatch[1].replace(/,/g, '')) || 0;
+
+      let min_monthly_payment = 0;
+      const mMatch = text.match(/(?:ขั้นต่ำ|ยอดชำระขั้นต่ำ|ค่างวด|minimum|min payment)[^\d]*([\d,]+(?:\.\d+)?)/i);
+      if (mMatch) min_monthly_payment = parseFloat(mMatch[1].replace(/,/g, '')) || 0;
+      else if (current_balance > 0) min_monthly_payment = Math.round(current_balance * 0.05);
+
+      let interest_rate_percent = 16.0;
+      const rMatch = text.match(/(?:ดอกเบี้ย|อัตราดอกเบี้ย|interest rate)[^\d]*([\d]+(?:\.\d+)?)\s*%/i)
+        || text.match(/([\d]+(?:\.\d+)?)\s*%\s*(?:ต่อปี|p\.a\.)?/i);
+      if (rMatch) interest_rate_percent = parseFloat(rMatch[1]) || 16.0;
+
+      let due_day = 15;
+      const dMatch = text.match(/(?:ครบกำหนด|วันชำระ|due date|วันที่)[^\d]*(\d{1,2})/i);
+      if (dMatch) {
+        const day = parseInt(dMatch[1], 10);
+        if (day >= 1 && day <= 31) due_day = day;
+      }
+
+      const shortBank = bank_name.split(' ')[0].replace('ธนาคาร', '');
+      const debt_name = `${debt_type} ${shortBank}`;
+
+      return sendJson(res, 200, {
+        ok: true,
+        debt: {
+          bank_name,
+          debt_name,
+          debt_type,
+          current_balance,
+          interest_rate_percent,
+          min_monthly_payment,
+          due_day
+        }
+      });
     }
 
     /* ---- Gemini Vision analyze (alias: /extract-image per API spec) ---- */

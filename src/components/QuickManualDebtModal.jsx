@@ -1,22 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  ArrowLeft, 
+  X, 
+  Save, 
+  Sparkles, 
+  FileText, 
   PlusCircle, 
   Edit3, 
-  Save, 
-  Home, 
-  ChevronRight, 
-  AlertCircle,
-  FileEdit,
-  Sparkles,
-  Building2,
-  CreditCard,
-  Coins,
-  Percent,
-  Calendar,
-  Copy,
-  CheckCircle2,
-  Loader2
+  AlertCircle, 
+  CheckCircle2, 
+  Loader2, 
+  Building2, 
+  CreditCard, 
+  Calendar, 
+  Percent, 
+  Coins, 
+  HelpCircle,
+  Copy
 } from 'lucide-react';
 import { 
   MAJOR_THAI_BANKS, 
@@ -25,9 +24,15 @@ import {
 } from '../services/geminiService';
 import { formatCurrency } from '../utils/debtEngine';
 
-export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
+export default function QuickManualDebtModal({ 
+  isOpen = true, 
+  editingDebt = null, 
+  onSave, 
+  onClose 
+}) {
   const [activeTab, setActiveTab] = useState('manual'); // 'manual' | 'parser'
-
+  
+  // Form fields
   const [bankName, setBankName] = useState('ธนาคารกสิกรไทย (KBank)');
   const [customBankName, setCustomBankName] = useState('');
   const [debtName, setDebtName] = useState('');
@@ -42,10 +47,11 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
   const [isParsing, setIsParsing] = useState(false);
   const [parserSuccessMsg, setParserSuccessMsg] = useState('');
 
-  // Validation
+  // Validation state
   const [validationError, setValidationError] = useState('');
   const [wasParsedFromText, setWasParsedFromText] = useState(false);
 
+  // Initialize form when editing
   useEffect(() => {
     if (editingDebt) {
       const bank = editingDebt.bank_name || editingDebt.lender || 'ธนาคารกสิกรไทย (KBank)';
@@ -63,7 +69,8 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
       setCurrentBalance(editingDebt.current_balance ?? editingDebt.balance ?? '');
       setInterestRatePercent(editingDebt.interest_rate_percent ?? editingDebt.interestRate ?? '');
       setMinMonthlyPayment(editingDebt.min_monthly_payment ?? editingDebt.minPayment ?? '');
-
+      
+      // Extract due day integer
       let dayVal = '15';
       if (editingDebt.due_day) {
         dayVal = String(editingDebt.due_day);
@@ -72,9 +79,25 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
         if (match) dayVal = match[0];
       }
       setDueDay(dayVal);
+      setActiveTab('manual');
+    } else {
+      // Reset form defaults for new debt
+      setBankName('ธนาคารกสิกรไทย (KBank)');
+      setCustomBankName('');
+      setDebtName('');
+      setDebtType('บัตรเครดิต');
+      setCurrentBalance('');
+      setInterestRatePercent('');
+      setMinMonthlyPayment('');
+      setDueDay('15');
+      setRawText('');
+      setParserSuccessMsg('');
+      setValidationError('');
+      setWasParsedFromText(false);
     }
-  }, [editingDebt]);
+  }, [editingDebt, isOpen]);
 
+  // Auto-fill min payment preview if balance changes and min payment is empty
   const handleBalanceChange = (e) => {
     const val = e.target.value;
     setCurrentBalance(val);
@@ -84,6 +107,7 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
     }
   };
 
+  // Handle Copy-Paste Text Parser via Gemini API
   const handleParseText = async () => {
     if (!rawText || !rawText.trim()) {
       setValidationError('กรุณาวางข้อความ e-Statement ก่อนสกัดข้อมูล');
@@ -97,6 +121,7 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
     try {
       const parsed = await parseDebtTextWithGemini(rawText);
 
+      // Populate form fields
       if (parsed.bank_name) {
         const matchedBank = MAJOR_THAI_BANKS.find(b => b.toLowerCase().includes(parsed.bank_name.toLowerCase()) || parsed.bank_name.toLowerCase().includes(b.toLowerCase()));
         if (matchedBank) {
@@ -126,6 +151,7 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
     }
   };
 
+  // Validate form submission
   const handleSubmit = (e) => {
     e.preventDefault();
     setValidationError('');
@@ -136,6 +162,7 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
     const rateNum = parseFloat(interestRatePercent);
     const minPayNum = parseFloat(minMonthlyPayment);
 
+    // Client-side Validation Rules
     if (!effectiveBankName) {
       setValidationError('กรุณาระบุสถาบันการเงิน / เจ้าหนี้');
       return;
@@ -161,6 +188,7 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
       return;
     }
 
+    // Submit validated payload
     const debtPayload = {
       id: editingDebt?.id || `debt-${Date.now()}`,
       bank_name: effectiveBankName,
@@ -186,59 +214,46 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
     };
 
     onSave(debtPayload);
+    onClose();
   };
 
+  if (!isOpen) return null;
+
+  // Monthly interest estimate preview
   const estimatedMonthlyInterest = currentBalance && interestRatePercent
     ? Math.round((parseFloat(currentBalance) * (parseFloat(interestRatePercent) / 100)) / 12)
     : 0;
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6 animate-fade-in pb-12">
-      
-      {/* 1. Breadcrumb Trail */}
-      <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
-        <button 
-          onClick={onCancel}
-          className="flex items-center gap-1 hover:text-indigo-600 transition-colors cursor-pointer"
-        >
-          <Home className="w-3.5 h-3.5" />
-          <span>หน้าหลัก</span>
-        </button>
-        <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-        <span className="text-indigo-600 font-bold flex items-center gap-1.5 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-200">
-          <FileEdit className="w-3.5 h-3.5" />
-          {editingDebt ? 'แก้ไขข้อมูลหนี้' : 'เพิ่มรายการหนี้ใหม่'}
-        </span>
-      </div>
-
-      {/* 2. Visual Header */}
-      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <span className="badge-gold text-xs font-bold">
-            ✍️ Quick Manual Debt Form (e-Statement Standard)
-          </span>
-          <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2 pt-1 tracking-tight">
-            {editingDebt ? <Edit3 className="w-6 h-6 text-indigo-600" /> : <PlusCircle className="w-6 h-6 text-indigo-600" />}
-            {editingDebt ? `แก้ไขข้อมูลหนี้: ${editingDebt.name}` : '+ เพิ่มรายการหนี้ใหม่ (Add Debt)'}
-          </h1>
-          <p className="text-xs text-slate-500 font-medium">
-            กรอกข้อมูลตามสเปก e-Statement หรือใช้ AI คัดลอกข้อความวางเพื่อสกัดข้อมูลเข้าฟอร์ม
-          </p>
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-3 sm:p-4 animate-fade-in overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full border border-slate-200 overflow-hidden my-auto max-h-[92vh] flex flex-col">
+        
+        {/* Modal Header */}
+        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-100 bg-slate-50/80">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-md">
+              {editingDebt ? <Edit3 className="w-5 h-5" /> : <PlusCircle className="w-5 h-5" />}
+            </div>
+            <div>
+              <h2 className="text-lg font-black text-slate-900 flex items-center gap-2 tracking-tight">
+                {editingDebt ? `แก้ไขข้อมูลหนี้: ${editingDebt.name || editingDebt.debt_name}` : '+ เพิ่มรายการหนี้ (Add Debt)'}
+              </h2>
+              <p className="text-xs text-slate-500 font-medium">
+                {editingDebt ? 'อัปเดตรายละเอียดหนี้เพื่อคำนวณแผนการโปะใหม่' : 'กรอกข้อมูลฟอร์ม e-Statement หรือคัดลอกข้อความวางให้ AI ช่วยสกัด'}
+              </p>
+            </div>
+          </div>
+          
+          <button
+            onClick={onClose}
+            className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors cursor-pointer"
+            aria-label="Close"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
-        <button
-          onClick={onCancel}
-          className="btn-secondary text-xs py-2 px-4 flex items-center gap-2 cursor-pointer font-semibold"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          ยกเลิก
-        </button>
-      </div>
-
-      {/* 3. Form & Parser Container */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        
-        {/* Tab Selection Bar */}
+        {/* Tab Toggle Navigation */}
         <div className="flex border-b border-slate-200 bg-slate-100/50 p-1.5 gap-1 text-xs font-bold">
           <button
             type="button"
@@ -252,7 +267,7 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
             <Building2 className="w-4 h-4" />
             <span>กรอกข้อมูลเอง (Quick Manual Form)</span>
           </button>
-
+          
           <button
             type="button"
             onClick={() => setActiveTab('parser')}
@@ -267,7 +282,7 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
           </button>
         </div>
 
-        {/* Alerts */}
+        {/* Success Alert Banner */}
         {parserSuccessMsg && (
           <div className="bg-emerald-50 border-b border-emerald-200 p-3 px-5 flex items-center gap-2.5 text-xs text-emerald-800 font-semibold">
             <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
@@ -275,6 +290,7 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
           </div>
         )}
 
+        {/* Validation Error Alert Banner */}
         {validationError && (
           <div className="bg-rose-50 border-b border-rose-200 p-3 px-5 flex items-center gap-2.5 text-xs text-rose-800 font-bold">
             <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
@@ -282,12 +298,17 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
           </div>
         )}
 
-        <div className="p-6">
+        {/* Modal Content Body */}
+        <div className="p-5 sm:p-6 overflow-y-auto space-y-5 flex-1">
+          
+          {/* TAB 1: Quick Manual Form */}
           {activeTab === 'manual' && (
-            <form onSubmit={handleSubmit} className="space-y-5">
+            <form id="quick-debt-form" onSubmit={handleSubmit} className="space-y-4">
               
-              {/* Row 1: Bank Name & Debt Type */}
+              {/* Row 1: Creditor / Bank Name & Debt Type */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                
+                {/* Bank / Creditor Selector */}
                 <div>
                   <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-1.5">
                     <Building2 className="w-3.5 h-3.5 text-indigo-600" />
@@ -299,15 +320,16 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
                     className="input-dark text-slate-900 font-semibold text-xs"
                     required
                   >
-                    {MAJOR_THAI_BANKS.map(b => (
+                    {MAJOR_THAI_BANKS.map((b) => (
                       <option key={b} value={b}>{b}</option>
                     ))}
                   </select>
 
+                  {/* Custom Bank Name Input if "อื่นๆ" is selected */}
                   {bankName === 'อื่นๆ' && (
                     <input
                       type="text"
-                      placeholder="ระบุชื่อสถาบันการเงิน..."
+                      placeholder="พิมพ์ชื่อสถาบันการเงิน / เจ้าหนี้..."
                       value={customBankName}
                       onChange={(e) => setCustomBankName(e.target.value)}
                       className="input-dark text-slate-900 font-medium text-xs mt-2"
@@ -316,6 +338,7 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
                   )}
                 </div>
 
+                {/* Debt Type Selector */}
                 <div>
                   <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-1.5">
                     <CreditCard className="w-3.5 h-3.5 text-indigo-600" />
@@ -327,25 +350,26 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
                     className="input-dark text-slate-900 font-semibold text-xs"
                     required
                   >
-                    {DEBT_TYPES.map(t => (
+                    {DEBT_TYPES.map((t) => (
                       <option key={t} value={t}>{t}</option>
                     ))}
                   </select>
                 </div>
+
               </div>
 
               {/* Debt Name */}
               <div>
                 <label className="text-xs font-bold text-slate-700 flex items-center justify-between mb-1.5">
                   <span className="flex items-center gap-1.5">
-                    <FileEdit className="w-3.5 h-3.5 text-indigo-600" />
+                    <FileText className="w-3.5 h-3.5 text-indigo-600" />
                     ชื่อรายการหนี้
                   </span>
-                  <span className="text-[11px] text-slate-400">เช่น 'บัตรเครดิต K-Bank', 'สินเชื่อบ้านกสิกร'</span>
+                  <span className="text-[11px] text-slate-400 font-normal">เช่น 'บัตรเครดิต K-Bank', 'สินเชื่อบ้านกสิกร'</span>
                 </label>
                 <input
                   type="text"
-                  placeholder="เช่น บัตรเครดิต K-Bank"
+                  placeholder="เช่น บัตรเครดิต K-Bank หรือ สินเชื่อบ้านกสิกร"
                   value={debtName}
                   onChange={(e) => setDebtName(e.target.value)}
                   className="input-dark text-slate-900 font-semibold text-sm"
@@ -355,6 +379,8 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
 
               {/* Row 2: Current Balance & Interest Rate */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                
+                {/* Current Balance */}
                 <div>
                   <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-1.5">
                     <Coins className="w-3.5 h-3.5 text-indigo-600" />
@@ -374,6 +400,7 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
                   </div>
                 </div>
 
+                {/* Annual Interest Rate (%) */}
                 <div>
                   <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-1.5">
                     <Percent className="w-3.5 h-3.5 text-rose-600" />
@@ -383,7 +410,7 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
                     <input
                       type="number"
                       step="0.01"
-                      placeholder="เช่น 16.0"
+                      placeholder="เช่น 16.0 หรือ 24.5"
                       value={interestRatePercent}
                       onChange={(e) => setInterestRatePercent(e.target.value)}
                       className="input-dark text-rose-600 font-black text-base pr-10"
@@ -392,14 +419,19 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
                     <span className="absolute right-3 top-2.5 text-xs text-slate-400 font-bold">%</span>
                   </div>
                 </div>
+
               </div>
 
-              {/* Row 3: Minimum Payment & Due Day */}
+              {/* Row 3: Minimum Payment & Payment Due Day */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                
+                {/* Minimum Monthly Payment */}
                 <div>
-                  <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-1.5">
-                    <Coins className="w-3.5 h-3.5 text-blue-600" />
-                    ค่างวดขั้นต่ำต่อเดือน
+                  <label className="text-xs font-bold text-slate-700 flex items-center justify-between mb-1.5">
+                    <span className="flex items-center gap-1.5">
+                      <Coins className="w-3.5 h-3.5 text-blue-600" />
+                      ค่างวดขั้นต่ำต่อเดือน
+                    </span>
                   </label>
                   <div className="relative">
                     <input
@@ -415,6 +447,7 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
                   </div>
                 </div>
 
+                {/* Due Day Selector (1-31) */}
                 <div>
                   <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-1.5">
                     <Calendar className="w-3.5 h-3.5 text-emerald-600" />
@@ -426,14 +459,17 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
                     className="input-dark text-slate-900 font-semibold text-xs"
                     required
                   >
-                    {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
-                      <option key={day} value={day}>วันที่ {day} ของทุกเดือน</option>
+                    {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
+                      <option key={day} value={day}>
+                        วันที่ {day} ของทุกเดือน
+                      </option>
                     ))}
                   </select>
                 </div>
+
               </div>
 
-              {/* Interest Estimate */}
+              {/* Real-Time Monthly Interest Calculation Preview */}
               {currentBalance && interestRatePercent && estimatedMonthlyInterest > 0 && (
                 <div className="bg-indigo-50/80 border border-indigo-200 rounded-xl p-3.5 flex items-center justify-between text-xs">
                   <div className="flex items-center gap-2 text-indigo-800 font-semibold">
@@ -446,61 +482,37 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
                 </div>
               )}
 
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={onCancel}
-                  className="btn-secondary text-xs px-5 py-2.5 cursor-pointer font-semibold"
-                >
-                  ยกเลิก
-                </button>
-
-                <button
-                  type="submit"
-                  className="btn-gold text-xs px-6 py-2.5 flex items-center gap-2 cursor-pointer shadow-md font-extrabold"
-                >
-                  <Save className="w-4 h-4" />
-                  {editingDebt ? 'บันทึกการแก้ไข' : 'บันทึกหนี้ใหม่'}
-                </button>
-              </div>
-
             </form>
           )}
 
+          {/* TAB 2: Copy-Paste Text Parser */}
           {activeTab === 'parser' && (
             <div className="space-y-4">
+              
               <div className="bg-indigo-50/70 border border-indigo-100 rounded-xl p-4 text-xs text-indigo-900 space-y-1">
                 <h4 className="font-extrabold flex items-center gap-1.5 text-indigo-950">
                   <Copy className="w-4 h-4 text-indigo-600" />
-                  คัดลอกข้อความแจ้งยอด e-Statement มาวางได้ทันที:
+                  วิธีใช้งานคัดลอกข้อความวาง (Copy-Paste Text Parser):
                 </h4>
                 <p className="text-slate-600 leading-relaxed">
-                  วางข้อความแจ้งยอดหนี้ SMS หรืออีเมล e-Statement แล้วกดปุ่มให้ Gemini AI สกัดข้อมูลเข้าฟอร์มให้อัตโนมัติ
+                  คัดลอกข้อความแจ้งยอด e-Statement หรืออีเมลสรุปยอดหนี้จากธนาคาร เช่น "เรียน คุณสมชาย ยอดรวมชำระ 45,000 บาท ดอกเบี้ย 16% ชำระขั้นต่ำ 2,200 บาท วันครบกำหนด 15" แล้ววางในช่องด้านล่าง AI จะวิเคราะห์สกัดข้อมูลลงฟอร์มให้อัตโนมัติ
                 </p>
               </div>
 
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1.5">
-                  ข้อความดิบ e-Statement
+                  ข้อความดิบ e-Statement / อีเมลแจ้งยอดหนี้
                 </label>
                 <textarea
-                  rows={7}
+                  rows={6}
                   placeholder="วางข้อความ e-Statement ที่นี่..."
                   value={rawText}
                   onChange={(e) => setRawText(e.target.value)}
-                  className="input-dark text-xs font-mono p-3 leading-relaxed w-full"
+                  className="input-dark text-xs font-mono p-3 leading-relaxed w-full focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
 
-              <div className="flex items-center justify-between pt-2">
-                <button
-                  type="button"
-                  onClick={onCancel}
-                  className="btn-secondary text-xs px-4 py-2 font-semibold"
-                >
-                  ยกเลิก
-                </button>
-
+              <div className="flex justify-end">
                 <button
                   type="button"
                   onClick={handleParseText}
@@ -520,12 +532,35 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
                   )}
                 </button>
               </div>
+
             </div>
+          )}
+
+        </div>
+
+        {/* Modal Footer Controls */}
+        <div className="p-4 sm:p-5 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="btn-secondary text-xs px-4 py-2.5 font-semibold cursor-pointer"
+          >
+            ยกเลิก
+          </button>
+
+          {activeTab === 'manual' && (
+            <button
+              type="submit"
+              form="quick-debt-form"
+              className="btn-gold text-xs px-6 py-2.5 flex items-center gap-2 font-black shadow-md cursor-pointer"
+            >
+              <Save className="w-4 h-4" />
+              <span>{editingDebt ? 'บันทึกการแก้ไข' : 'บันทึกหนี้ใหม่'}</span>
+            </button>
           )}
         </div>
 
       </div>
-
     </div>
   );
 }

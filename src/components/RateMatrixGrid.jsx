@@ -58,7 +58,7 @@ function EditableCell({ value, onChange, type = 'text', options = null, numeric 
         onBlur={() => setEditing(false)}
         className="w-full text-[11px] py-1 px-1.5 rounded-md border-2 border-indigo-500 bg-white font-bold text-indigo-700 outline-none"
       >
-        {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+        {(options || []).map(opt => <option key={opt} value={opt}>{opt}</option>)}
       </select>
     );
   }

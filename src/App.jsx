@@ -27,6 +27,8 @@ import {
   Signal
 } from 'lucide-react';
 
+import ErrorBoundary from './components/ErrorBoundary';
+
 export default function App() {
   // Auth hooks
   const { user, login, logout, loading: authLoading } = useAuth();
@@ -46,8 +48,12 @@ export default function App() {
     return <LoginPage onLoginSuccess={login} />;
   }
 
-  // Main app component
-  return <AppContent isAdmin={isAdmin} user={user} onLogout={logout} />;
+  // Main app component wrapped in top-level ErrorBoundary
+  return (
+    <ErrorBoundary componentName="ระบบหลัก (Nee Noi App)">
+      <AppContent isAdmin={isAdmin} user={user} onLogout={logout} />
+    </ErrorBoundary>
+  );
 }
 
 function AppContent({ isAdmin, user, onLogout }) {
@@ -327,10 +333,12 @@ function AppContent({ isAdmin, user, onLogout }) {
 
           {/* Page 5: Backend Admin Dashboard */}
           {activeTab === 'admin' && isAdmin && (
-            <AdminDashboard
-              onRefreshView={() => setViewData(getViewDataForUser(user.id, selectedUserId))}
-              showToast={showToast}
-            />
+            <ErrorBoundary componentName="Admin Dashboard (หน้าหลังบ้าน)" onNavigateHome={() => setActiveTab('calculator')}>
+              <AdminDashboard
+                onRefreshView={() => setViewData(getViewDataForUser(user.id, selectedUserId))}
+                showToast={showToast}
+              />
+            </ErrorBoundary>
           )}
 
           {activeTab === 'admin' && !isAdmin && (

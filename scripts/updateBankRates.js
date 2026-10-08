@@ -232,7 +232,7 @@ async function runUpdateBankRates() {
     Output compact JSON (minified) for reliable parsing.
     `;
 
-    console.log("🤖 Querying Gemini 3.6 Flash AI model for 10 Thai bank rate promotions...");
+    console.log("🤖 Querying Gemini 1.5 Flash AI model for 10 Thai bank rate promotions...");
     const response = await model.generateContent(prompt);
     const responseText = response.response.text();
 

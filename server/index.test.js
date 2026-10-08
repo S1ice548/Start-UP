@@ -277,9 +277,9 @@ describe('POST /api/admin/promotions/analyze', () => {
       expect(data.promotion.year_2_3_rate).toBe('');   // null -> ''
       expect(data.promotion.bank_ref_link).toBe('');   // 'null' -> ''
 
-      // Gemini request shape: key in URL + inline_data image part
+      // Gemini request shape: key in URL + inline_data image part + primary Flash model
       expect(capturedRequest).toBeTruthy();
-      expect(capturedRequest.url).toContain('models/gemini');
+      expect(capturedRequest.url).toContain('models/gemini-3.6-flash');
       expect(capturedRequest.url).toContain('key=');
       const sentBody = JSON.parse(capturedRequest.init.body);
       const parts = sentBody.contents[0].parts;
@@ -289,6 +289,71 @@ describe('POST /api/admin/promotions/analyze', () => {
     } finally {
       fetchSpy.mockRestore();
       delete fetch.__orig;
+    }
+  });
+
+  it('retries with gemini-3.6-flash when the first attempt returns 503 High Demand', async () => {
+    const geminiJson = JSON.stringify({
+      bank_name: 'ธนาคารกสิกรไทย',
+      product_name: 'Fallback Success Promo',
+      min_income: 15000,
+      avg_3yr_rate: 2.99
+    });
+    const calledModels = [];
+    const origFetch = globalThis.fetch;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const urlStr = String(url);
+      if (urlStr.includes('generativelanguage.googleapis.com')) {
+        // Primary and fallback are the same model string (gemini-3.6-flash),
+        // so distinguish attempts by call order: 1st call 503, retry succeeds.
+        const attempt = calledModels.length;
+        calledModels.push('gemini-3.6-flash');
+        if (attempt === 0) {
+          return new Response(JSON.stringify({ error: { message: '503 Service Unavailable: High Demand' } }), { status: 503 });
+        }
+        return new Response(JSON.stringify({
+          candidates: [{ content: { parts: [{ text: geminiJson }] } }]
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return origFetch(url, init);
+    });
+
+    try {
+      const res = await fetch(`${baseUrl}/api/admin/promotions/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_base64: 'aGVsbG8=' })
+      });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.ok).toBe(true);
+      expect(data.promotion.product_name).toBe('Fallback Success Promo');
+      expect(calledModels).toEqual(['gemini-3.6-flash', 'gemini-3.6-flash']);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('returns 503 status when both primary and fallback models experience 503 High Demand', async () => {
+    const origFetch = globalThis.fetch;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if (String(url).includes('generativelanguage.googleapis.com')) {
+        return new Response(JSON.stringify({ error: { message: '503 High Demand error' } }), { status: 503 });
+      }
+      return origFetch(url, init);
+    });
+
+    try {
+      const res = await fetch(`${baseUrl}/api/admin/promotions/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_base64: 'aGVsbG8=' })
+      });
+      expect(res.status).toBe(503);
+      const data = await res.json();
+      expect(data.error).toMatch(/Gemini Vision error/);
+    } finally {
+      fetchSpy.mockRestore();
     }
   });
 
@@ -394,3 +459,213 @@ describe('POST /api/admin/promotions/upload-image', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('/api/debts CRUD & Text Parser', () => {
+  it('GET /api/debts returns seeded user debts', async () => {
+    const res = await fetch(`${baseUrl}/api/debts?user_id=user1`);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+    expect(Array.isArray(data.debts)).toBe(true);
+    expect(data.debts.length).toBeGreaterThan(0);
+  });
+
+  it('POST /api/debts creates and validates a manual debt entry', async () => {
+    const payload = {
+      user_id: 'user1',
+      bank_name: 'ธนาคารกสิกรไทย (KBank)',
+      debt_name: 'บัตรเครดิต KBank Quick',
+      debt_type: 'บัตรเครดิต',
+      current_balance: 45000,
+      interest_rate_percent: 16.0,
+      min_monthly_payment: 2250,
+      due_day: 15,
+      entry_method: 'manual'
+    };
+
+    const res = await fetch(`${baseUrl}/api/debts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+    expect(data.debt.debt_name).toBe('บัตรเครดิต KBank Quick');
+    expect(data.debt.entry_method).toBe('manual');
+    expect(data.debt.current_balance).toBe(45000);
+    expect(data.debt.interest_rate_percent).toBe(16.0);
+  });
+
+  it('POST /api/debts rejects invalid balance <= 0 with 400', async () => {
+    const res = await fetch(`${baseUrl}/api/debts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bank_name: 'KBank',
+        debt_name: 'Test',
+        current_balance: -500,
+        interest_rate_percent: 16,
+        min_monthly_payment: 1000
+      })
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toMatch(/current_balance/);
+  });
+
+  it('POST /api/debts/parse-text extracts structured fields from raw text', async () => {
+    const rawText = 'ธนาคารกสิกรไทย บัตรเครดิต ยอดคงเหลือ 35,000 บาท ดอกเบี้ย 16% ขั้นต่ำ 1,750 บาท ครบกำหนดวันที่ 20';
+    const res = await fetch(`${baseUrl}/api/debts/parse-text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: rawText })
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+    expect(data.debt.bank_name).toBe('ธนาคารกสิกรไทย (KBank)');
+    expect(data.debt.current_balance).toBe(35000);
+    expect(data.debt.interest_rate_percent).toBe(16);
+    expect(data.debt.min_monthly_payment).toBe(1750);
+    expect(data.debt.due_day).toBe(20);
+  });
+
+  it('DELETE /api/debts removes a debt item', async () => {
+    // Create one to delete
+    const createRes = await fetch(`${baseUrl}/api/debts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: 'debt-to-delete-999',
+        user_id: 'user1',
+        bank_name: 'Test Bank',
+        debt_name: 'Temporary Debt',
+        current_balance: 10000,
+        interest_rate_percent: 10,
+        min_monthly_payment: 500
+      })
+    });
+    expect(createRes.status).toBe(200);
+
+    const deleteRes = await fetch(`${baseUrl}/api/debts?id=debt-to-delete-999`, {
+      method: 'DELETE'
+    });
+    expect(deleteRes.status).toBe(200);
+    const data = await deleteRes.json();
+    expect(data.ok).toBe(true);
+    expect(data.deletedId).toBe('debt-to-delete-999');
+  });
+});
+
+describe('Authentication & User Profiles API', () => {
+  it('POST /api/auth/signup registers credentials and creates user_profiles record', async () => {
+    const uniqueUsername = `testuser_${Date.now()}`;
+    const signupData = {
+      username: uniqueUsername,
+      password: 'password123',
+      gender: 'ชาย',
+      age: 26,
+      occupation: 'พนักงานบริษัท'
+    };
+
+    const res = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signupData)
+    });
+
+    expect(res.status).toBe(201);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+    expect(data.user.username).toBe(uniqueUsername);
+    expect(data.user.profile).toBeDefined();
+    expect(data.user.profile.gender).toBe('ชาย');
+    expect(data.user.profile.age).toBe(26);
+    expect(data.user.profile.occupation).toBe('พนักงานบริษัท');
+
+
+    // Verify user profile fetch
+    const profileRes = await fetch(`${baseUrl}/api/user-profiles?user_id=${data.user.id}`);
+    expect(profileRes.status).toBe(200);
+    const profileData = await profileRes.json();
+    expect(profileData.ok).toBe(true);
+    expect(profileData.profile.occupation).toBe('พนักงานบริษัท');
+  });
+
+  it('POST /api/auth/signup rejects duplicate username with 400', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: 'admin',
+        password: 'password123',
+        gender: 'หญิง',
+        age: 30,
+        occupation: 'ฟรีแลนซ์'
+      })
+    });
+
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.ok).toBe(false);
+    expect(data.error).toMatch(/ถูกใช้งานแล้ว/);
+  });
+
+  it('POST /api/auth/signup rejects invalid age <= 0 with 400', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: 'invalidage_user',
+        password: 'password123',
+        gender: 'หญิง',
+        age: 0,
+        occupation: 'ฟรีแลนซ์'
+      })
+    });
+
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.ok).toBe(false);
+    expect(data.error).toMatch(/อายุต้องมากกว่า 0/);
+  });
+
+  it('POST /api/auth/login authenticates valid user and returns profile data', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: 'user1',
+        password: 'user123'
+      })
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+    expect(data.user.username).toBe('user1');
+    expect(data.user.profile).toBeDefined();
+    expect(data.user.profile.gender).toBe('ชาย');
+    expect(data.user.profile.age).toBe(30);
+  });
+
+  it('POST /api/auth/login returns 401 on incorrect password', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: 'user1',
+        password: 'wrongpassword'
+      })
+    });
+
+    expect(res.status).toBe(401);
+    const data = await res.json();
+    expect(data.ok).toBe(false);
+  });
+});
+
+

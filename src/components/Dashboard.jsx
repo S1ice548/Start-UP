@@ -99,10 +99,11 @@ export default function Dashboard({ onRefreshView, showToast }) {
     };
 
     let updatedDebts = [];
+    const currentDebts = managedUserData?.debts || [];
     if (editingDebtItem) {
-      updatedDebts = managedUserData.debts.map(d => d.id === editingDebtItem.id ? newDebtObj : d);
+      updatedDebts = currentDebts.map(d => d.id === editingDebtItem.id ? newDebtObj : d);
     } else {
-      updatedDebts = [...managedUserData.debts, newDebtObj];
+      updatedDebts = [...currentDebts, newDebtObj];
     }
 
     const updated = { ...managedUserData, debts: updatedDebts };
@@ -310,7 +311,7 @@ export default function Dashboard({ onRefreshView, showToast }) {
                   </td>
                 </tr>
               ) : (
-                managedUserData.debts.map((debt) => (
+                (managedUserData?.debts || []).map((debt) => (
                   <tr key={debt.id} className="hover:bg-slate-50 transition-colors">
                     <td className="py-3 px-3 font-bold text-slate-900">{debt.name}</td>
                     <td className="py-3 px-3 text-slate-600">{debt.lender}</td>

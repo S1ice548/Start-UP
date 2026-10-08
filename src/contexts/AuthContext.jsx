@@ -3,6 +3,34 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 // Create Auth Context
 const AuthContext = createContext(null);
 
+export function getStoredRegisteredUsers() {
+  try {
+    const raw = localStorage.getItem('neenoi_registered_users');
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function getStoredUserProfiles() {
+  try {
+    const raw = localStorage.getItem('neenoi_user_profiles');
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveStoredUserProfile(profileRecord) {
+  try {
+    const current = getStoredUserProfiles();
+    const updated = [profileRecord, ...current.filter(p => p.id !== profileRecord.id && p.userId !== profileRecord.userId)];
+    localStorage.setItem('neenoi_user_profiles', JSON.stringify(updated));
+  } catch (e) {
+    console.error('Error saving user profile to local storage:', e);
+  }
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -30,8 +58,164 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('neenoi_auth_user');
   };
 
+  const loginWithCredentials = async (username, password) => {
+    const cleanUsername = (username || '').trim();
+    const cleanPassword = (password || '');
+
+    if (!cleanUsername || !cleanPassword) {
+      throw new Error('กรุณากรอกชื่อผู้ใช้และรหัสผ่าน');
+    }
+
+    // Attempt Server API
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: cleanUsername, password: cleanPassword })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.ok && data.user) {
+          login(data.user);
+          return data.user;
+        }
+      }
+    } catch {
+      // Fallback to local
+    }
+
+    // Default / Local accounts fallback
+    const DEFAULT_ACCOUNTS = [
+      { id: 'admin', username: 'admin', email: 'admin@neenoi.com', password: 'admin123', name: 'Admin User', role: 'admin' },
+      { id: 'user1', username: 'user1', email: 'user1@neenoi.com', password: 'user123', name: 'User 1', role: 'user' },
+      { id: 'user2', username: 'user2', email: 'user2@neenoi.com', password: 'user234', name: 'User 2', role: 'user' },
+      { id: 'user3', username: 'user3', email: 'user3@neenoi.com', password: 'user345', name: 'User 3', role: 'user' }
+    ];
+
+    const registered = getStoredRegisteredUsers();
+    const allAccounts = [...registered, ...DEFAULT_ACCOUNTS];
+
+    const matched = allAccounts.find(
+      acc => (acc.username.toLowerCase() === cleanUsername.toLowerCase() || (acc.email && acc.email.toLowerCase() === cleanUsername.toLowerCase()))
+        && acc.password === cleanPassword
+    );
+
+    if (matched) {
+      const profiles = getStoredUserProfiles();
+      const matchedProfile = profiles.find(p => p.userId === matched.id || p.id === matched.id) || matched.profile || null;
+      const userData = {
+        id: matched.id,
+        username: matched.username,
+        email: matched.email || `${matched.username}@neenoi.com`,
+        name: matched.name || matched.username,
+        role: matched.role || 'user',
+        profile: matchedProfile,
+        loginTime: new Date().toISOString()
+      };
+      login(userData);
+      return userData;
+    }
+
+    throw new Error('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
+  };
+
+  const signup = async ({ username, password, gender, age, occupation }) => {
+    const cleanUsername = (username || '').trim();
+    const cleanPassword = (password || '');
+    const cleanGender = (gender || '').trim();
+    const ageNum = Number(age);
+    const cleanOccupation = (occupation || '').trim();
+
+    // Validation
+    if (!cleanUsername) throw new Error('กรุณากรอกชื่อผู้ใช้ (Username)');
+    if (!cleanPassword) throw new Error('กรุณากรอกรหัสผ่าน (Password)');
+    if (!cleanGender) throw new Error('กรุณาเลือกเพศ');
+    if (isNaN(ageNum) || ageNum <= 0) throw new Error('อายุต้องมากกว่า 0');
+    if (!cleanOccupation) throw new Error('กรุณาระบุอาชีพ');
+
+    // Attempt Server API first
+    try {
+      const res = await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: cleanUsername,
+          password: cleanPassword,
+          gender: cleanGender,
+          age: ageNum,
+          occupation: cleanOccupation
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.ok && data.user) {
+        // Also persist locally for offline access
+        if (data.user.profile) {
+          saveStoredUserProfile(data.user.profile);
+        }
+        login(data.user);
+        return data.user;
+      } else if (data && data.error) {
+        throw new Error(data.error);
+      }
+    } catch (err) {
+      if (err.message && !err.message.includes('fetch')) {
+        throw err;
+      }
+      // If network fetch failed, proceed with local fallback registration
+    }
+
+    // Local Registration Fallback
+    const DEFAULT_USERNAMES = ['admin', 'user1', 'user2', 'user3'];
+    const registered = getStoredRegisteredUsers();
+    if (
+      DEFAULT_USERNAMES.includes(cleanUsername.toLowerCase()) ||
+      registered.some(u => u.username.toLowerCase() === cleanUsername.toLowerCase())
+    ) {
+      throw new Error('ชื่อผู้ใช้นี้ถูกใช้งานแล้ว');
+    }
+
+    const newUserId = `usr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const newProfile = {
+      id: newUserId,
+      userId: newUserId,
+      gender: cleanGender,
+      age: ageNum,
+      occupation: cleanOccupation,
+      createdAt: new Date().toISOString()
+    };
+
+    const newUser = {
+      id: newUserId,
+      username: cleanUsername,
+      password: cleanPassword,
+      name: cleanUsername,
+      email: `${cleanUsername}@neenoi.com`,
+      role: 'user',
+      profile: newProfile,
+      createdAt: new Date().toISOString()
+    };
+
+    // Save into local storage
+    const updatedRegistered = [newUser, ...registered];
+    localStorage.setItem('neenoi_registered_users', JSON.stringify(updatedRegistered));
+    saveStoredUserProfile(newProfile);
+
+    const userData = {
+      id: newUser.id,
+      username: newUser.username,
+      email: newUser.email,
+      name: newUser.name,
+      role: newUser.role,
+      profile: newProfile,
+      loginTime: new Date().toISOString()
+    };
+
+    login(userData);
+    return userData;
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, loginWithCredentials, signup }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,4 +1,4 @@
-/** Gemini 1.5 Flash OCR Service for Debt Statement Processing */
+/** Gemini 3.6 Flash OCR Service for Debt Statement Processing */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { normalizeRateMatrix, computeAvg3yr, parseMrtaCell } from '../types/rateMatrix';
@@ -33,7 +33,33 @@ export const DEBT_SCHEMA = {
   required: ['issuerName', 'debtCategory', 'totalBalance', 'minimumPayment', 'dueDate', 'interestRate']
 };
 
-// Canonical Thai bank list used by the Admin refinance promotion form
+// Canonical Thai bank list used by forms
+export const MAJOR_THAI_BANKS = [
+  'ธนาคารกสิกรไทย (KBank)',
+  'ธนาคารไทยพาณิชย์ (SCB)',
+  'ธนาคารกรุงไทย (KTB)',
+  'ธนาคารกรุงศรีอยุธยา (Krungsri)',
+  'ธนาคารกรุงเทพ (BBL)',
+  'ธนาคารทหารไทยธนชาต (ttb)',
+  'ธนาคารออมสิน (GSB)',
+  'ธนาคารอาคารสงเคราะห์ (ธอส)',
+  'ธนาคารซีไอเอ็มบี ไทย (CIMBT)',
+  'ธนาคารยูโอบี (UOB)',
+  'อิออน (AEON)',
+  'เฟิร์สช้อยส์ (Krungsri First Choice)',
+  'เซ็นทรัล เดอะวัน (Central The 1)',
+  'บัตรเครดิต KTC',
+  'อื่นๆ'
+];
+
+export const DEBT_TYPES = [
+  'บัตรเครดิต',
+  'สินเชื่อส่วนบุคคล',
+  'สินเชื่อบ้าน',
+  'สินเชื่อรถยนต์',
+  'อื่นๆ'
+];
+
 export const THAI_BANKS = [
   'ธนาคารกรุงศรีอยุธยา',
   'ธนาคารกสิกรไทย',
@@ -47,7 +73,6 @@ export const THAI_BANKS = [
   'ธนาคารยูโอบี'
 ];
 
-// Fuzzy aliases (Thai short names + English brand names) -> canonical Thai bank name
 const THAI_BANK_ALIASES = [
   { canonical: 'ธนาคารกรุงศรีอยุธยา', keys: ['กรุงศรี', 'krungsri', 'krung sri', 'ayudhya'] },
   { canonical: 'ธนาคารกสิกรไทย', keys: ['กสิกร', 'kbank', 'kasikorn'] },
@@ -61,12 +86,6 @@ const THAI_BANK_ALIASES = [
   { canonical: 'ธนาคารยูโอบี', keys: ['ยูโอบี', 'uob'] }
 ];
 
-/**
- * Normalize a bank name returned by Gemini Vision into the canonical Thai bank
- * name used across the app (falls back to the raw value when unknown).
- * @param {string} rawName
- * @returns {string}
- */
 export function normalizeBankName(rawName) {
   if (!rawName || typeof rawName !== 'string') return '';
   const cleaned = rawName.trim().replace(/\s+/g, ' ');
@@ -78,7 +97,178 @@ export function normalizeBankName(rawName) {
   return cleaned;
 }
 
-// Initialize Gemini AI client
+/**
+ * Local regex fallback parser for raw e-Statement email text
+ * @param {string} text 
+ * @returns {object} Parsed fields for quick debt entry form
+ */
+export function parseDebtTextLocal(text) {
+  if (!text || typeof text !== 'string') {
+    return {
+      bank_name: 'อื่นๆ',
+      debt_name: 'รายการหนี้',
+      debt_type: 'บัตรเครดิต',
+      current_balance: 0,
+      interest_rate_percent: 16.0,
+      min_monthly_payment: 0,
+      due_day: 15
+    };
+  }
+
+  const raw = text.trim();
+
+  // 1. Detect Bank
+  let bank_name = 'อื่นๆ';
+  if (/กสิกร|kbank/i.test(raw)) bank_name = 'ธนาคารกสิกรไทย (KBank)';
+  else if (/ไทยพาณิชย์|scb/i.test(raw)) bank_name = 'ธนาคารไทยพาณิชย์ (SCB)';
+  else if (/ktc|กรุงไทย/i.test(raw)) bank_name = 'บัตรเครดิต KTC';
+  else if (/กรุงศรี|krungsri/i.test(raw)) bank_name = 'ธนาคารกรุงศรีอยุธยา (Krungsri)';
+  else if (/กรุงเทพ|bbl/i.test(raw)) bank_name = 'ธนาคารกรุงเทพ (BBL)';
+  else if (/ทหารไทย|ธนชาต|ttb/i.test(raw)) bank_name = 'ธนาคารทหารไทยธนชาต (ttb)';
+  else if (/ออมสิน|gsb/i.test(raw)) bank_name = 'ธนาคารออมสิน (GSB)';
+  else if (/ธอส|อาคารสงเคราะห์|ghb/i.test(raw)) bank_name = 'ธนาคารอาคารสงเคราะห์ (ธอส)';
+  else if (/cimb/i.test(raw)) bank_name = 'ธนาคารซีไอเอ็มบี ไทย (CIMBT)';
+  else if (/ยูโอบี|uob/i.test(raw)) bank_name = 'ธนาคารยูโอบี (UOB)';
+  else if (/aeon|อิออน/i.test(raw)) bank_name = 'อิออน (AEON)';
+  else if (/first choice|เฟิร์สช้อยส์/i.test(raw)) bank_name = 'เฟิร์สช้อยส์ (Krungsri First Choice)';
+  else if (/central/i.test(raw)) bank_name = 'เซ็นทรัล เดอะวัน (Central The 1)';
+
+  // 2. Detect Debt Type
+  let debt_type = 'บัตรเครดิต';
+  if (/บ้าน|mortgage|home loan/i.test(raw)) debt_type = 'สินเชื่อบ้าน';
+  else if (/รถยนต์|รถ|auto loan|car loan/i.test(raw)) debt_type = 'สินเชื่อรถยนต์';
+  else if (/ส่วนบุคคล|personal loan|xpress loan|speedy/i.test(raw)) debt_type = 'สินเชื่อส่วนบุคคล';
+  else if (/บัตรกดเงินสด|cash card|บัตรเครดิต|credit card/i.test(raw)) debt_type = 'บัตรเครดิต';
+
+  // 3. Current Balance (ยอดคงเหลือ)
+  let current_balance = 0;
+  const balanceMatch = raw.match(/(?:ยอดคงเหลือ|ยอดรวม|ยอดหนี้|ยอดชำระทั้งสิ้น|total balance|balance|amount due)[^\d]*([\d,]+(?:\.\d+)?)/i)
+    || raw.match(/([\d,]+(?:\.\d+)?)\s*(?:บาท|thb)/i);
+  if (balanceMatch) {
+    current_balance = parseFloat(balanceMatch[1].replace(/,/g, '')) || 0;
+  }
+
+  // 4. Min Payment (ขั้นต่ำ)
+  let min_monthly_payment = 0;
+  const minMatch = raw.match(/(?:ขั้นต่ำ|ยอดชำระขั้นต่ำ|ค่างวด|minimum|min payment)[^\d]*([\d,]+(?:\.\d+)?)/i);
+  if (minMatch) {
+    min_monthly_payment = parseFloat(minMatch[1].replace(/,/g, '')) || 0;
+  } else if (current_balance > 0) {
+    min_monthly_payment = Math.round(current_balance * 0.05); // Default 5%
+  }
+
+  // 5. Interest Rate (%)
+  let interest_rate_percent = 16.0;
+  const rateMatch = raw.match(/(?:ดอกเบี้ย|อัตราดอกเบี้ย|interest rate)[^\d]*([\d]+(?:\.\d+)?)\s*%/i)
+    || raw.match(/([\d]+(?:\.\d+)?)\s*%\s*(?:ต่อปี|p\.a\.)?/i);
+  if (rateMatch) {
+    interest_rate_percent = parseFloat(rateMatch[1]) || 16.0;
+  } else if (debt_type === 'สินเชื่อบ้าน') {
+    interest_rate_percent = 5.5;
+  } else if (debt_type === 'สินเชื่อรถยนต์') {
+    interest_rate_percent = 4.5;
+  } else if (debt_type === 'สินเชื่อส่วนบุคคล') {
+    interest_rate_percent = 22.0;
+  }
+
+  // 6. Due Day (1-31)
+  let due_day = 15;
+  const dueMatch = raw.match(/(?:ครบกำหนด|วันชำระ|due date|วันที่)[^\d]*(\d{1,2})/i);
+  if (dueMatch) {
+    const day = parseInt(dueMatch[1], 10);
+    if (day >= 1 && day <= 31) due_day = day;
+  }
+
+  // Debt Name
+  const shortBankName = bank_name.split(' ')[0].replace('ธนาคาร', '');
+  const debt_name = `${debt_type} ${shortBankName}`;
+
+  return {
+    bank_name,
+    debt_name,
+    debt_type,
+    current_balance,
+    interest_rate_percent,
+    min_monthly_payment,
+    due_day
+  };
+}
+
+/**
+ * Extract structured debt fields from raw e-Statement text using Gemini API
+ * @param {string} rawText 
+ * @returns {Promise<object>} Structured e-Statement debt object
+ */
+export async function parseDebtTextWithGemini(rawText) {
+  if (!rawText || !rawText.trim()) {
+    return parseDebtTextLocal('');
+  }
+
+  try {
+    // Attempt backend text parse endpoint if available
+    try {
+      const res = await fetch('/api/debts/parse-text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: rawText })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.ok && data?.debt) {
+          return data.debt;
+        }
+      }
+    } catch {
+      // Backend route unreachable, proceed to client Gemini / local fallback
+    }
+
+    // Direct client Gemini call if VITE_GEMINI_API_KEY is available
+    const genAI = initializeGeminiClient();
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-3.6-flash',
+      generationConfig: { responseMimeType: 'application/json', temperature: 0.1 }
+    });
+
+    const prompt = `
+  คุณคือ AI ผู้เชี่ยวชาญด้านการอ่านและสกัดข้อมูลจากข้อความ e-Statement / อีเมลใบแจ้งหนี้
+  โปรดอ่านข้อความดิบต่อไปนี้แล้วสกัดข้อมูลหนี้สินเป็น JSON ตามโครงสร้างนี้เท่านั้น:
+
+  {
+    "bank_name": "เลือกชื่อสถาบันการเงินที่ตรงที่สุด เช่น ธนาคารกสิกรไทย (KBank), ธนาคารไทยพาณิชย์ (SCB), บัตรเครดิต KTC, ธนาคารกรุงศรีอยุธยา (Krungsri), ธนาคารกรุงเทพ (BBL), ธนาคารทหารไทยธนชาต (ttb), ธนาคารออมสิน (GSB), ธนาคารอาคารสงเคราะห์ (ธอส), ธนาคารซีไอเอ็มบี ไทย (CIMBT), ธนาคารยูโอบี (UOB), อิออน (AEON), เฟิร์สช้อยส์ (Krungsri First Choice), เซ็นทรัล เดอะวัน (Central The 1), หรือ อื่นๆ",
+    "debt_name": "ชื่อรายการหนี้ที่เข้าใจง่าย (เช่น บัตรเครดิต K-Bank, สินเชื่อส่วนบุคคล SCB, สินเชื่อบ้านกสิกร)",
+    "debt_type": "เลือกตรงจาก: 'บัตรเครดิต', 'สินเชื่อส่วนบุคคล', 'สินเชื่อบ้าน', 'สินเชื่อรถยนต์', 'อื่นๆ'",
+    "current_balance": 45000.00, // ยอดหนี้คงเหลือรวม (Number)
+    "interest_rate_percent": 16.0, // อัตราดอกเบี้ยต่อปี (%) (Number)
+    "min_monthly_payment": 2200.00, // ยอดชำระขั้นต่ำต่อเดือน (Number)
+    "due_day": 15 // วันครบกำหนดชำระประจำเดือน (Integer 1-31)
+  }
+
+  ข้อความ e-Statement:
+  """
+  ${rawText}
+  """
+`;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+
+    const parsed = parseGeminiResponse(text);
+    return {
+      bank_name: parsed.bank_name || 'อื่นๆ',
+      debt_name: parsed.debt_name || 'รายการหนี้',
+      debt_type: parsed.debt_type || 'บัตรเครดิต',
+      current_balance: Number(parsed.current_balance) || 0,
+      interest_rate_percent: Number(parsed.interest_rate_percent) || 0,
+      min_monthly_payment: Number(parsed.min_monthly_payment) || 0,
+      due_day: Number(parsed.due_day) >= 1 && Number(parsed.due_day) <= 31 ? Number(parsed.due_day) : 15
+    };
+
+  } catch (err) {
+    console.warn('Gemini text parsing failed, using smart local parser fallback:', err.message);
+    return parseDebtTextLocal(rawText);
+  }
+}// Initialize Gemini AI client
 const initializeGeminiClient = () => {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
   if (!apiKey) {
@@ -87,8 +277,32 @@ const initializeGeminiClient = () => {
   return new GoogleGenerativeAI(apiKey);
 };
 
+
 /**
- * Extract debt information from an image using Gemini 1.5 Flash OCR
+ * Check if an error represents a 503 High Demand or 429 Rate Limit error from Gemini
+ * @param {Error|object} err
+ * @returns {boolean}
+ */
+export function isHighDemandError(err) {
+  if (!err) return false;
+  if (err.isHighDemand) return true;
+  const status = err.status || err.statusCode || err.response?.status;
+  if (status === 503 || status === 429) return true;
+  const msg = String(err.message || err.toString() || '').toLowerCase();
+  return (
+    msg.includes('503') ||
+    msg.includes('429') ||
+    msg.includes('high demand') ||
+    msg.includes('rate limit') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('unavailable') ||
+    msg.includes('overloaded') ||
+    msg.includes('too many requests')
+  );
+}
+
+/**
+ * Extract debt information from an image using Gemini 1.5 Pro OCR (fallback to Flash)
  * @param {File|Blob} imageFile - Image file or blob to process
  * @param {object} options - Processing options
  * @param {string} options.lang - Preferred language (en/th) for hint
@@ -102,13 +316,13 @@ export async function extractDebtDataFromImage(imageFile, options = {}) {
     onProgress = () => {}
   } = options;
 
+  // gemini-3.6-flash is the current active Flash endpoint — the 1.5 series is
+  // deprecated and returns 404.
+  const primaryModelName = 'gemini-3.6-flash';
+  const fallbackModelName = 'gemini-3.6-flash';
+
   try {
-    // Initialize Gemini client
     const genAI = initializeGeminiClient();
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
-      generationConfig: { responseMimeType: 'application/json', temperature: 0.1 }
-    });
 
     // Convert image to base64 (supports File/Blob, data URL and http(s) URL)
     const { base64: imageAsBase64, mimeType: imageMimeType } = await resolveImageParts(imageFile);
@@ -118,15 +332,43 @@ export async function extractDebtDataFromImage(imageFile, options = {}) {
 
     // Process the image with OCR
     onProgress({ stage: 'uploading', status: 'Processing image...' });
-    const result = await model.generateContent([
-      prompt,
-      {
-        inlineData: {
-          data: imageAsBase64,
-          mimeType: imageMimeType
+
+    let result;
+    try {
+      const model = genAI.getGenerativeModel({
+        model: primaryModelName,
+        generationConfig: { responseMimeType: 'application/json', temperature: 0.1 }
+      });
+      result = await model.generateContent([
+        prompt,
+        {
+          inlineData: {
+            data: imageAsBase64,
+            mimeType: imageMimeType
+          }
         }
+      ]);
+    } catch (primaryErr) {
+      if (isHighDemandError(primaryErr)) {
+        console.warn(`Primary model (${primaryModelName}) returned 503/429. Falling back to ${fallbackModelName}...`);
+        onProgress({ stage: 'uploading', status: 'High demand detected. Retrying with gemini-3.6-flash...' });
+        const fallbackModel = genAI.getGenerativeModel({
+          model: fallbackModelName,
+          generationConfig: { responseMimeType: 'application/json', temperature: 0.1 }
+        });
+        result = await fallbackModel.generateContent([
+          prompt,
+          {
+            inlineData: {
+              data: imageAsBase64,
+              mimeType: imageMimeType
+            }
+          }
+        ]);
+      } else {
+        throw primaryErr;
       }
-    ]);
+    }
 
     const response = await result.response;
     const text = response.text();
@@ -146,13 +388,18 @@ export async function extractDebtDataFromImage(imageFile, options = {}) {
   } catch (error) {
     console.error('Gemini OCR extraction failed:', error);
 
-    // Fallback to tesseract.js if enabled and API fails
+    // Fallback to tesseract.js if enabled and API fails due to key
     if (fallbackToTesseract && error.message.includes('API key')) {
       console.warn('Falling back to Tesseract.js OCR for image processing');
       return await fallbackToTesseractOCR(imageFile, { lang, onProgress });
     }
 
-    throw new Error(`Gemini OCR processing failed: ${error.message}`);
+    const customError = new Error(`Gemini OCR processing failed: ${error.message}`);
+    if (isHighDemandError(error)) {
+      customError.isHighDemand = true;
+      customError.status = 503;
+    }
+    throw customError;
   }
 }
 
@@ -401,7 +648,9 @@ function fileToBase64(file) {
 }
 
 /**
- * Process multiple files in batch
+ * Process multiple files in batch — STRICTLY SEQUENTIAL (one by one):
+ * each image must completely finish and return a result before the next one
+ * starts, with no artificial delays between API calls (never use Promise.all).
  * @param {File[]} files - Array of files to process
  * @param {object} options - Processing options
  * @returns {Promise<DEBT_SCHEMA[]>} Array of extracted data
@@ -410,8 +659,7 @@ export async function batchExtractDebtData(files, options = {}) {
   const results = [];
   const total = files.length;
 
-  for (let i = 0; i < total; i++) {
-    const file = files[i];
+  for (const [index, file] of files.entries()) {
     try {
       const data = await extractDebtDataFromImage(file, {
         ...options,
@@ -419,9 +667,9 @@ export async function batchExtractDebtData(files, options = {}) {
           options.onProgress?.({
             ...progress,
             fileName: file.name,
-            index: i,
+            index,
             total,
-            progress: ((i + progress.stage === 'completed' ? 1 : 0) + i) / total * 100
+            status: `[${index + 1}/${total}] ${progress.status}`
           });
         }
       });
@@ -510,6 +758,8 @@ export async function extractRefinancePromoFromImage(imageFile, options = {}) {
   // Resolve any supported input (File / Blob / data URL / http URL) into base64 parts
   const imageParts = await resolveImageParts(imageFile);
 
+  let backendHighDemandErr = null;
+
   // ---- Path 1: Backend API (server-side Gemini key, shared for every user) ----
   try {
     onProgress({ stage: 'uploading', status: 'กำลังส่งรูปภาพแบนเนอร์ไปยัง Backend API...' });
@@ -528,20 +778,28 @@ export async function extractRefinancePromoFromImage(imageFile, options = {}) {
         return normalizePromoData(data.promotion);
       }
       throw new Error(data?.error || 'Backend analysis failed');
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      const msg = errData?.error || `Backend HTTP ${res.status}`;
+      const err = Object.assign(new Error(msg), { status: res.status });
+      if (res.status === 503 || res.status === 429 || isHighDemandError(err)) {
+        backendHighDemandErr = err;
+      }
+      throw err;
     }
   } catch (backendErr) {
     console.warn('Backend Gemini Vision unavailable, falling back to client-side Gemini:', backendErr.message);
   }
 
   // ---- Path 2 (fallback): direct client-side Gemini call (client-only / dev mode) ----
+  // gemini-3.6-flash is the current active Flash endpoint — the 1.5 series is
+  // deprecated and returns 404.
+  const primaryModelName = 'gemini-3.6-flash';
+  const fallbackModelName = 'gemini-3.6-flash';
+
   try {
     onProgress({ stage: 'uploading', status: 'กำลังส่งรูปภาพแบนเนอร์ให้ Gemini Vision...' });
     const genAI = initializeGeminiClient();
-    // gemini-1.5-flash was retired (Sept 2026) — use the current flash model.
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-3.6-flash',
-      generationConfig: { responseMimeType: 'application/json', temperature: 0.1 }
-    });
 
     const imageAsBase64 = imageParts.base64;
 
@@ -579,16 +837,44 @@ export async function extractRefinancePromoFromImage(imageFile, options = {}) {
   }
 `;
 
-    onProgress({ stage: 'processing', status: 'Gemini Vision กำลังวิเคราะห์ดอกเบี้ยและเงื่อนไขโปรโมชัน...' });
-    const result = await model.generateContent([
-      prompt,
-      {
-        inlineData: {
-          data: imageAsBase64,
-          mimeType: imageParts.mimeType
+    onProgress({ stage: 'processing', status: 'Gemini Vision (gemini-3.6-flash) กำลังวิเคราะห์ดอกเบี้ยและเงื่อนไขโปรโมชัน...' });
+
+    let result;
+    try {
+      const model = genAI.getGenerativeModel({
+        model: primaryModelName,
+        generationConfig: { responseMimeType: 'application/json', temperature: 0.1 }
+      });
+      result = await model.generateContent([
+        prompt,
+        {
+          inlineData: {
+            data: imageAsBase64,
+            mimeType: imageParts.mimeType
+          }
         }
+      ]);
+    } catch (primaryErr) {
+      if (isHighDemandError(primaryErr)) {
+        console.warn(`Primary model (${primaryModelName}) returned 503/429. Falling back to ${fallbackModelName}...`);
+        onProgress({ stage: 'processing', status: 'ระบบ AI หนาแน่น กำลังลองใหม่ด้วย gemini-3.6-flash...' });
+        const fallbackModel = genAI.getGenerativeModel({
+          model: fallbackModelName,
+          generationConfig: { responseMimeType: 'application/json', temperature: 0.1 }
+        });
+        result = await fallbackModel.generateContent([
+          prompt,
+          {
+            inlineData: {
+              data: imageAsBase64,
+              mimeType: imageParts.mimeType
+            }
+          }
+        ]);
+      } else {
+        throw primaryErr;
       }
-    ]);
+    }
 
     const response = await result.response;
     const text = response.text();
@@ -605,12 +891,20 @@ export async function extractRefinancePromoFromImage(imageFile, options = {}) {
 
   } catch (error) {
     console.error('Refinance Vision Extraction Failed:', error);
-    throw new Error(`Gemini Vision Extraction Error: ${error.message}`);
+    const customErr = new Error(`Gemini Vision Extraction Error: ${error.message}`);
+    if (backendHighDemandErr || isHighDemandError(error)) {
+      customErr.isHighDemand = true;
+      customErr.status = 503;
+    }
+    throw customErr;
   }
 }
 
 /**
- * Extract multiple Refinance Interest Rate Promotions in batch
+ * Extract multiple Refinance Interest Rate Promotions in batch —
+ * STRICTLY SEQUENTIAL (one by one): each image must completely finish and
+ * return a result before the next one starts, with no artificial delays
+ * between API calls (never use Promise.all here).
  * @param {File[]|Blob[]} imageFiles - Array of banner images
  * @param {object} options - Processing options
  * @returns {Promise<Array>} Array of extracted objects
@@ -619,23 +913,22 @@ export async function batchExtractRefinancePromos(imageFiles, options = {}) {
   const results = [];
   const total = imageFiles.length;
 
-  for (let i = 0; i < total; i++) {
-    const file = imageFiles[i];
+  for (const [index, file] of imageFiles.entries()) {
     try {
       const extracted = await extractRefinancePromoFromImage(file, {
         ...options,
         onProgress: (p) => {
           options.onProgress?.({
             ...p,
-            index: i,
+            index,
             total,
-            status: `[${i + 1}/${total}] ${p.status}`
+            status: `[${index + 1}/${total}] ${p.status}`
           });
         }
       });
       results.push({ file, extracted, success: true });
     } catch (error) {
-      console.error(`Batch item ${i} failed:`, error);
+      console.error(`Batch item ${index} failed:`, error);
       results.push({ file, error: error.message, success: false });
     }
   }
@@ -648,6 +941,10 @@ export default {
   batchExtractDebtData,
   extractRefinancePromoFromImage,
   batchExtractRefinancePromos,
+  parseDebtTextWithGemini,
+  parseDebtTextLocal,
+  MAJOR_THAI_BANKS,
+  DEBT_TYPES,
   DEBT_CATEGORIES,
   DEBT_SCHEMA
 };

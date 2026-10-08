@@ -5,7 +5,8 @@ import {
   Zap, 
   Snowflake, 
   Bot, 
-  Plus,  Trash2,
+  Plus,  
+  Trash2,
   Edit3,
   PiggyBank, 
   CheckCircle2, 
@@ -22,10 +23,12 @@ import {
   Bookmark,
   RotateCcw,
   Clock,
-  Check
+  Check,
+  FileText
 } from 'lucide-react';
 import { calculateDebtPayoff, formatCurrency, STRATEGIES_INFO } from '../utils/debtEngine';
 import { exportDebtsToExcel } from '../utils/excelExport';
+import QuickManualDebtModal from './QuickManualDebtModal';
 
 export default function DebtCalculator({ 
   debts, 
@@ -45,9 +48,37 @@ export default function DebtCalculator({
   const [budgetString, setBudgetString] = useState(extraBudget ? String(extraBudget) : '');
   const [showSavedPlansList, setShowSavedPlansList] = useState(false);
 
+  // Quick Manual Debt Modal State
+  const [isQuickModalOpen, setIsQuickModalOpen] = useState(false);
+  const [modalEditingDebt, setModalEditingDebt] = useState(null);
+
   // Table Filter & Search State
   const [searchQuery, setSearchQuery] = useState('');
   const [debtFilter, setDebtFilter] = useState('all'); // 'all', 'high_interest', 'scanned'
+
+  // Open Add Debt Modal
+  const handleOpenAddDebtModal = () => {
+    setModalEditingDebt(null);
+    setIsQuickModalOpen(true);
+  };
+
+  // Open Edit Debt Modal
+  const handleOpenEditDebtModal = (debt) => {
+    setModalEditingDebt(debt);
+    setIsQuickModalOpen(true);
+  };
+
+  // Save Debt Handler from Quick Modal
+  const handleSaveModalDebt = (debtData) => {
+    const existingIndex = debts.findIndex(d => d.id === debtData.id);
+    if (existingIndex >= 0) {
+      setDebts(debts.map(d => d.id === debtData.id ? debtData : d));
+    } else {
+      setDebts([...debts, debtData]);
+    }
+    setIsQuickModalOpen(false);
+    setModalEditingDebt(null);
+  };
 
   // Handle File Import (JSON & CSV)
   const handleFileImport = (e) => {
@@ -72,7 +103,8 @@ export default function DebtCalculator({
               balance: Number(cols[2]) || 10000,
               interestRate: Number(cols[3]) || 15,
               minPayment: Number(cols[4]) || 1000,
-              dueDate: cols[5] || '15 ของทุกเดือน'
+              dueDate: cols[5] || '15 ของทุกเดือน',
+              entry_method: 'file_import'
             };
           });
         }
@@ -80,12 +112,21 @@ export default function DebtCalculator({
         if (Array.isArray(imported) && imported.length > 0) {
           const cleaned = imported.map((d, i) => ({
             id: d.id || `imp-${Date.now()}-${i}`,
-            name: d.name || d['ชื่อรายการหนี้'] || `หนี้ ${i + 1}`,
-            lender: d.lender || d['เจ้าหนี้'] || 'ไม่ระบุเจ้าหนี้',
-            balance: Number(d.balance || d['ยอดหนี้คงเหลือ'] || 0),
-            interestRate: Number(d.interestRate || d['อัตราดอกเบี้ย'] || 0),
-            minPayment: Number(d.minPayment || d['ค่างวดขั้นต่ำ'] || 0),
-            dueDate: d.dueDate || d['วันครบกำหนดชำระ'] || '15 ของทุกเดือน',
+            bank_name: d.bank_name || d.lender || 'ไม่ระบุเจ้าหนี้',
+            lender: d.lender || d.bank_name || 'ไม่ระบุเจ้าหนี้',
+            debt_name: d.debt_name || d.name || `หนี้ ${i + 1}`,
+            name: d.name || d.debt_name || `หนี้ ${i + 1}`,
+            debt_type: d.debt_type || d.category || 'บัตรเครดิต',
+            category: d.category || d.debt_type || 'credit_card',
+            current_balance: Number(d.current_balance || d.balance || 0),
+            balance: Number(d.balance || d.current_balance || 0),
+            interest_rate_percent: Number(d.interest_rate_percent || d.interestRate || 0),
+            interestRate: Number(d.interestRate || d.interest_rate_percent || 0),
+            min_monthly_payment: Number(d.min_monthly_payment || d.minPayment || 0),
+            minPayment: Number(d.minPayment || d.min_monthly_payment || 0),
+            due_day: parseInt(d.due_day || 15, 10),
+            dueDate: d.dueDate || `${d.due_day || 15} ของทุกเดือน`,
+            entry_method: d.entry_method || 'file_import',
             isScanned: false
           }));
 
@@ -125,20 +166,23 @@ export default function DebtCalculator({
     }
   };
 
-  // Calculate Payoff Results
+  // Calculate Payoff Results Real-Time
   const result = calculateDebtPayoff(debts, extraBudget, manualStrategy);
 
-  const totalBalance = debts.reduce((sum, d) => sum + Number(d.balance), 0);
-  const totalMinPayment = debts.reduce((sum, d) => sum + Number(d.minPayment), 0);
+  const totalBalance = debts.reduce((sum, d) => sum + Number(d.balance || d.current_balance || 0), 0);
+  const totalMinPayment = debts.reduce((sum, d) => sum + Number(d.minPayment || d.min_monthly_payment || 0), 0);
   const totalMonthlyCommitment = totalMinPayment + Number(extraBudget || 0);
 
   // Filtered Debts List
   const displayDebts = debts.filter(d => {
-    const matchesSearch = d.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          (d.lender && d.lender.toLowerCase().includes(searchQuery.toLowerCase()));
+    const nameStr = d.name || d.debt_name || '';
+    const lenderStr = d.lender || d.bank_name || '';
+    const matchesSearch = nameStr.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                          lenderStr.toLowerCase().includes(searchQuery.toLowerCase());
     
     if (!matchesSearch) return false;
-    if (debtFilter === 'high_interest') return d.interestRate >= 20;
+    const rate = Number(d.interestRate ?? d.interest_rate_percent ?? 0);
+    if (debtFilter === 'high_interest') return rate >= 20;
     if (debtFilter === 'scanned') return d.isScanned;
     return true;
   });
@@ -152,6 +196,17 @@ export default function DebtCalculator({
   return (
     <div className="space-y-6 animate-fade-in">
       
+      {/* Quick Manual Debt Modal Component */}
+      <QuickManualDebtModal
+        isOpen={isQuickModalOpen}
+        editingDebt={modalEditingDebt}
+        onSave={handleSaveModalDebt}
+        onClose={() => {
+          setIsQuickModalOpen(false);
+          setModalEditingDebt(null);
+        }}
+      />
+
       {/* 1. Overview Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         
@@ -366,13 +421,13 @@ export default function DebtCalculator({
               </button>
             )}
 
-            {/* Add Debt Button */}
+            {/* Prominent Quick Manual Add Debt Button */}
             <button 
-              onClick={onNavigateToAddDebt}
-              className="btn-gold text-xs py-2 px-3.5 cursor-pointer shadow-sm font-bold"
+              onClick={handleOpenAddDebtModal}
+              className="btn-gold text-xs py-2 px-4 cursor-pointer shadow-md font-black flex items-center gap-1.5 bg-amber-400 hover:bg-amber-300 text-amber-950 border border-amber-500 rounded-xl"
             >
-              <Plus className="w-4 h-4" />
-              เพิ่มรายการหนี้ใหม่
+              <Plus className="w-4 h-4 stroke-[3]" />
+              <span>+ เพิ่มรายการหนี้ (Add Debt)</span>
             </button>
 
           </div>
@@ -431,8 +486,15 @@ export default function DebtCalculator({
         {/* Debt Table */}
         <div className="overflow-x-auto">
           {displayDebts.length === 0 ? (
-            <div className="p-8 text-center text-slate-400 text-xs">
-              ไม่พบรายการหนี้ตรงกับคำค้นหาหรือตัวกรองที่เลือก
+            <div className="p-8 text-center text-slate-400 text-xs flex flex-col items-center gap-2">
+              <FileText className="w-8 h-8 text-slate-300" />
+              <span>ไม่พบรายการหนี้ตรงกับคำค้นหาหรือตัวกรองที่เลือก</span>
+              <button
+                onClick={handleOpenAddDebtModal}
+                className="btn-gold text-xs py-1.5 px-3 font-bold mt-2 cursor-pointer"
+              >
+                + เพิ่มรายการหนี้ (Add Debt)
+              </button>
             </div>
           ) : (
             <table className="w-full text-left text-sm border-collapse">
@@ -450,6 +512,13 @@ export default function DebtCalculator({
               <tbody className="divide-y divide-slate-100 text-slate-700">
                 {displayDebts.map((debt, index) => {
                   const detail = result.debtPayoffDetails.find(d => d.id === debt.id);
+                  const nameVal = debt.name || debt.debt_name || 'รายการหนี้';
+                  const lenderVal = debt.lender || debt.bank_name || debt.creditor || 'ไม่ระบุเจ้าหนี้';
+                  const balanceVal = Number(debt.balance ?? debt.current_balance ?? 0);
+                  const rateVal = Number(debt.interestRate ?? debt.interest_rate_percent ?? 0);
+                  const minPayVal = Number(debt.minPayment ?? debt.min_monthly_payment ?? 0);
+                  const dueVal = debt.dueDate || (debt.due_day ? `${debt.due_day} ของทุกเดือน` : '15 ของทุกเดือน');
+
                   return (
                     <tr key={debt.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="py-3.5 px-4 text-center">
@@ -459,25 +528,35 @@ export default function DebtCalculator({
                       </td>
                       <td className="py-3.5 px-4">
                         <div className="font-bold text-slate-900 flex items-center gap-2">
-                          {debt.name}
+                          {nameVal}
                           {debt.isScanned && (
                             <span className="badge-gold text-[10px]">สแกนด้วย OCR</span>
                           )}
+                          {debt.entry_method === 'manual' && (
+                            <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded-md text-[10px] font-bold">
+                              Quick Manual
+                            </span>
+                          )}
+                          {debt.entry_method === 'copy_paste' && (
+                            <span className="bg-purple-50 text-purple-700 border border-purple-200 px-1.5 py-0.5 rounded-md text-[10px] font-bold">
+                              Copy-Paste AI
+                            </span>
+                          )}
                         </div>
-                        <div className="text-xs text-slate-500 font-medium">{debt.lender} • ครบกำหนด: {debt.dueDate}</div>
+                        <div className="text-xs text-slate-500 font-medium">{lenderVal} • ครบกำหนด: {dueVal}</div>
                       </td>
                       <td className="py-3.5 px-4 text-right font-extrabold text-indigo-600">
-                        {formatCurrency(debt.balance)}
+                        {formatCurrency(balanceVal)}
                       </td>
                       <td className="py-3.5 px-4 text-right">
                         <span className={`px-2 py-0.5 rounded-md text-xs font-bold ${
-                          debt.interestRate >= 20 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-600'
+                          rateVal >= 20 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-600'
                         }`}>
-                          {debt.interestRate}%
+                          {rateVal}%
                         </span>
                       </td>
                       <td className="py-3.5 px-4 text-right font-semibold text-slate-800">
-                        {formatCurrency(debt.minPayment)}
+                        {formatCurrency(minPayVal)}
                       </td>
                       <td className="py-3.5 px-4 text-center">
                         <span className="badge-green">
@@ -486,7 +565,7 @@ export default function DebtCalculator({
                       </td>
                       <td className="py-3.5 px-4 text-center space-x-1">
                         <button 
-                          onClick={() => onNavigateToEditDebt(debt)}
+                          onClick={() => handleOpenEditDebtModal(debt)}
                           className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-slate-100 transition-colors cursor-pointer"
                           title="แก้ไขรายการหนี้"
                         >

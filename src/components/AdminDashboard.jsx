@@ -30,7 +30,8 @@ import {
   Layers,
   CheckCheck,
   AlertTriangle,
-  Briefcase
+  Briefcase,
+  Table2
 } from 'lucide-react';
 import { INITIAL_ADMIN_DATA, MOCK_USERS, loadUserDataFromStorage, saveUserDataToStorage } from '../data/mockData';
 import { formatCurrency } from '../utils/debtEngine';
@@ -403,38 +404,81 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
       }));
 
       applyExtractedToForm(extracted, activeItem.preview, activeItem.bank_ref_link);
+      setExtractionFailed(false);
       showNotification('✨ Gemini Vision สกัดข้อมูลแบนเนอร์สำเร็จ!');
     } catch (err) {
       console.error('Extraction error:', err);
-      showNotification(`❌ เกิดข้อผิดพลาดในการวิเคราะห์รูปภาพ: ${err.message}`, 'error');
+      setBannerQueue(prev => prev.map((item, idx) => {
+        if (idx === activeQueueIndex) {
+          return { ...item, status: 'ERROR' };
+        }
+        return item;
+      }));
+      setExtractionFailed(true);
+
+      const isHighDemand = err?.isHighDemand || err?.status === 503 || err?.status === 429 ||
+        /503|429|high demand|rate limit|resource_exhausted|overloaded|unavailable|too many requests/i.test(err?.message || '');
+
+      if (isHighDemand) {
+        showNotification('ระบบ AI กำลังมีผู้ใช้งานหนาแน่น กรุณากรอกข้อมูลในตารางด้วยตนเอง', 'error');
+      } else {
+        showNotification(`❌ เกิดข้อผิดพลาดในการวิเคราะห์รูปภาพ: ${err.message}`, 'error');
+      }
     } finally {
       setIsAnalyzing(false);
       setAiStatusMessage('');
     }
   };
 
-  // Batch Extract ALL Images in Queue
+  // Batch Extract ALL Images in Queue — STRICTLY SEQUENTIAL (one by one):
+  // each image must completely finish and return a result before the next one
+  // starts, with no artificial delays between API calls (never use Promise.all
+  // for this queue). Per-image errors are caught and the loop continues.
   const handleBatchExtractAll = async () => {
     if (bannerQueue.length === 0) {
       return showNotification('⚠️ ไม่มีรูปภาพในคิว กรุณาอัปโหลดหรือวางรูปภาพก่อน', 'error');
     }
 
     setIsAnalyzing(true);
-    showNotification(`🤖 เริ่มวิเคราะห์คิวรูปภาพทั้งหมด ${bannerQueue.length} รูป...`);
+    const total = bannerQueue.length;
+    let successCount = 0;
+    let errorCount = 0;
+    let hasHighDemandError = false;
+    let lastStatus = null; // 'success' | 'error' | null (before first item)
 
+    showNotification(`🤖 เริ่มวิเคราะห์คิวรูปภาพทั้งหมด ${total} รูป (ทีละรูป)...`);
+
+    // Work on a local copy; commit the whole queue to state when finished
     const updatedQueue = [...bannerQueue];
-    for (let i = 0; i < updatedQueue.length; i++) {
-      const item = updatedQueue[i];
-      setAiStatusMessage(`[${i + 1}/${updatedQueue.length}] Gemini Vision กำลังวิเคราะห์รูป ${item.name}...`);
+
+    for (const [index, item] of updatedQueue.entries()) {
+      const current = index + 1;
+
+      // Real-time progress: report the previous result before starting the next image
+      if (lastStatus === null) {
+        setAiStatusMessage(`กำลังวิเคราะห์รูปที่ ${current}/${total} (${item.name})...`);
+      } else if (lastStatus === 'success') {
+        setAiStatusMessage(`วิเคราะห์รูปที่ ${index}/${total} สำเร็จ... กำลังวิเคราะห์รูปที่ ${current}/${total}`);
+      } else {
+        setAiStatusMessage(`วิเคราะห์รูปที่ ${index}/${total} ไม่สำเร็จ... กำลังวิเคราะห์รูปที่ ${current}/${total}`);
+      }
+
       try {
         const fileToProcess = item.file || item.preview;
         const extracted = await extractRefinancePromoFromImage(fileToProcess, {
-          onProgress: (p) => setAiStatusMessage(`[${i + 1}/${updatedQueue.length}] ${p.status}`)
+          onProgress: (p) => setAiStatusMessage(`กำลังวิเคราะห์รูปที่ ${current}/${total}: ${p.status}`)
         });
-        updatedQueue[i] = { ...item, status: 'EXTRACTED', extractedData: extracted };
+        updatedQueue[index] = { ...item, status: 'EXTRACTED', extractedData: extracted };
+        successCount += 1;
+        lastStatus = 'success';
       } catch (err) {
-        console.error(`Item ${i} extraction failed:`, err);
-        updatedQueue[i] = { ...item, status: 'ERROR' };
+        console.error(`Item ${current}/${total} extraction failed:`, err);
+        updatedQueue[index] = { ...item, status: 'ERROR' };
+        errorCount += 1;
+        lastStatus = 'error';
+        if (err?.isHighDemand || err?.status === 503 || err?.status === 429 || /503|429|high demand|rate limit|resource_exhausted|overloaded|unavailable|too many requests/i.test(err?.message || '')) {
+          hasHighDemandError = true;
+        }
       }
     }
 
@@ -442,15 +486,22 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
     setIsAnalyzing(false);
     setAiStatusMessage('');
 
-    // Apply first extracted item to form
+    // Apply first extracted item to form if any succeeded
     const firstSuccess = updatedQueue.find(q => q.extractedData);
     if (firstSuccess) {
       const idx = updatedQueue.indexOf(firstSuccess);
       setActiveQueueIndex(idx);
       applyExtractedToForm(firstSuccess.extractedData, firstSuccess.preview, firstSuccess.bank_ref_link);
+      setExtractionFailed(false);
+      showNotification(`✅ วิเคราะห์ครบทั้ง ${total} รูป (สำเร็จ ${successCount}/${total}${errorCount > 0 ? `, ไม่สำเร็จ ${errorCount}` : ''}) เรียบร้อยแล้ว!`);
+    } else {
+      setExtractionFailed(true);
+      if (hasHighDemandError) {
+        showNotification('ระบบ AI กำลังมีผู้ใช้งานหนาแน่น กรุณากรอกข้อมูลในตารางด้วยตนเอง', 'error');
+      } else {
+        showNotification('❌ เกิดข้อผิดพลาดในการวิเคราะห์รูปภาพ กรุณากรอกข้อมูลในตารางด้วยตนเอง', 'error');
+      }
     }
-
-    showNotification(`✅ วิเคราะห์รูปภาพครบทั้ง ${updatedQueue.length} รูปเรียบร้อยแล้ว!`);
   };
 
   // Batch Save ALL Extracted Promotions in Queue to DB
@@ -650,10 +701,11 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
     };
 
     let updatedDebts = [];
+    const currentDebts = managedUserData?.debts || [];
     if (editingDebtItem) {
-      updatedDebts = managedUserData.debts.map(d => d.id === editingDebtItem.id ? newDebtObj : d);
+      updatedDebts = currentDebts.map(d => d.id === editingDebtItem.id ? newDebtObj : d);
     } else {
-      updatedDebts = [...managedUserData.debts, newDebtObj];
+      updatedDebts = [...currentDebts, newDebtObj];
     }
 
     const updated = { ...managedUserData, debts: updatedDebts };
@@ -1592,7 +1644,7 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
-                    {promotions.map((promo) => (
+                    {(promotions || []).map((promo) => (
                       <React.Fragment key={promo.id}>
                       <tr className="hover:bg-slate-50 transition-colors">
                         <td className="py-3 px-4">
@@ -1843,7 +1895,7 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
                     </td>
                   </tr>
                 ) : (
-                  occupations.map((occ) => (
+                  (occupations || []).map((occ) => (
                     <tr key={occ.id} className="hover:bg-slate-50 transition-colors">
                       <td className="py-2.5 px-3 font-bold text-slate-900">{occ.label}</td>
                       <td className="py-2.5 px-3 text-slate-600">{occ.labelEn || '-'}</td>
@@ -1947,14 +1999,14 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
-                {(managedUserData.debts || []).length === 0 ? (
+                {(managedUserData?.debts || []).length === 0 ? (
                   <tr>
                     <td colSpan="6" className="py-6 text-center text-slate-400">
                       ผู้ใช้รายนี้ไม่มีรายการหนี้ในระบบ
                     </td>
                   </tr>
                 ) : (
-                  managedUserData.debts.map((debt) => (
+                  (managedUserData?.debts || []).map((debt) => (
                     <tr key={debt.id} className="hover:bg-slate-50 transition-colors">
                       <td className="py-3 px-3 font-bold text-slate-900">{debt.name}</td>
                       <td className="py-3 px-3 text-slate-600">{debt.lender}</td>
@@ -2122,7 +2174,7 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
-                {filteredOcrLogs.map((log) => (
+                {(filteredOcrLogs || []).map((log) => (
                   <tr key={log.id} className="hover:bg-slate-50 transition-colors">
                     <td className="py-3 px-4 font-mono text-slate-500">
                       <div className="text-indigo-600 font-bold">{log.id}</div>
@@ -2163,7 +2215,7 @@ export default function AdminDashboard({ onRefreshView, showToast: globalShowToa
           </h3>
 
           <div className="bg-slate-900 text-slate-100 p-4 rounded-xl border border-slate-800 font-mono text-xs space-y-2 h-48 overflow-y-auto">
-            {adminData.systemLogs.map((sLog) => (
+            {(adminData?.systemLogs || []).map((sLog) => (
               <div key={sLog.id} className="flex items-start gap-2">
                 <span className="text-slate-400">[{sLog.time}]</span>
                 <span className={sLog.level === 'SUCCESS' ? 'text-emerald-400 font-bold' : 'text-indigo-400 font-bold'}>

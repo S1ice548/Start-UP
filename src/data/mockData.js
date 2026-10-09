@@ -1,3 +1,5 @@
+import { saveUserDebtsToCloud, fetchUserDebtsFromCloud } from '../services/supabaseService';
+
 const USER1_DEBTS = [
   {
     id: "debt-1",
@@ -243,6 +245,19 @@ export const loadUserDataFromStorage = (userId) => {
   return defaultData;
 };
 
+export const loadUserDataFromCloudOrStorage = async (userId) => {
+  if (!userId || userId === 'admin') return loadUserDataFromStorage(userId);
+  try {
+    const cloudData = await fetchUserDebtsFromCloud(userId);
+    if (cloudData) {
+      return cloudData;
+    }
+  } catch (e) {
+    console.warn('Could not fetch user data from cloud, using local fallback:', e);
+  }
+  return loadUserDataFromStorage(userId);
+};
+
 export const saveUserDataToStorage = (userId, data) => {
   if (!userId || userId === 'admin') return;
   try {
@@ -257,6 +272,8 @@ export const saveUserDataToStorage = (userId, data) => {
   } catch (e) {
     console.error('Error saving user data to storage:', e);
   }
+  // Async background save to Supabase Cloud
+  saveUserDebtsToCloud(userId, data);
 };
 
 export const resetUserDataStorage = (userId) => {

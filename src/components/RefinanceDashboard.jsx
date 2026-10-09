@@ -26,6 +26,11 @@ import { findBestMatch, hasUsableBestMatch } from '../utils/bestMatchEngine';
 import BankLogo from './BankLogo';
 import FormattedNumberInput from './FormattedNumberInput';
 import { getBankShort } from '../utils/promotionSync';
+import {
+  fetchRefinanceSettingsFromCloud,
+  saveRefinanceSettingsToCloud,
+  subscribeToRefinanceSettings
+} from '../services/supabaseService';
 
 const STORAGE_KEY = (userName) => `nee_noi_refinance_form_v3_${userName}`;
 
@@ -108,9 +113,33 @@ export default function RefinanceDashboard({ userName = 'User', onBack, ocrDebts
     });
   }, [homeLoans]);
 
-  // Persist form
+  // Load from Supabase Cloud DB & setup Realtime sync
+  useEffect(() => {
+    let active = true;
+    async function loadCloudSettings() {
+      const cloudSettings = await fetchRefinanceSettingsFromCloud(userName);
+      if (cloudSettings && active) {
+        setForm(cloudSettings);
+      }
+    }
+    loadCloudSettings();
+
+    const unsubscribe = subscribeToRefinanceSettings(userName, (newCloudForm) => {
+      if (active && newCloudForm) {
+        setForm(newCloudForm);
+      }
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [userName]);
+
+  // Persist form to LocalStorage & Supabase Cloud DB
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY(userName), JSON.stringify(form));
+    saveRefinanceSettingsToCloud(userName, form);
   }, [form, userName]);
 
   // ---------- Master data (occupations + promotions) ----------

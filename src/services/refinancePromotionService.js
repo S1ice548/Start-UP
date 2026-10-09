@@ -4,6 +4,7 @@
  */
 
 import { normalizeRateMatrix } from '../types/rateMatrix';
+import { fetchPromotionsFromCloud, savePromotionToCloud, deletePromotionFromCloud } from './supabaseService';
 
 const STORAGE_KEY = 'nee_noi_admin_refinance_promotions';
 
@@ -156,23 +157,30 @@ export const INITIAL_PROMOTIONS = [
  * @returns {Promise<Array>} List of promotions
  */
 export async function getPromotions() {
+  // 1. Try Supabase Cloud DB
   try {
-    // Try fetching from API endpoint if available.
-    // NOTE: trust the API whenever the response is OK, even if the list is
-    // empty (admin may have deleted every promotion) — only fall back to the
-    // stale localStorage copy when the backend is unreachable.
+    const cloudPromos = await fetchPromotionsFromCloud();
+    if (cloudPromos && cloudPromos.length > 0) {
+      return cloudPromos;
+    }
+  } catch (e) {
+    // Cloud fetch error, fallback below
+  }
+
+  // 2. Try Local API endpoint if available
+  try {
     const response = await fetch('/api/admin/promotions');
     if (response.ok) {
       const data = await response.json();
-      if (Array.isArray(data.promotions)) {
+      if (Array.isArray(data.promotions) && data.promotions.length > 0) {
         return data.promotions;
       }
     }
   } catch (e) {
-    // API not reachable or running in client-only mode
+    // API not reachable
   }
 
-  // Fallback to LocalStorage
+  // 3. Fallback to LocalStorage
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved) {
     try {
@@ -251,6 +259,9 @@ export async function savePromotion(promo) {
     updated_at: Date.now()
   };
 
+  // Try Supabase Cloud DB save
+  savePromotionToCloud(updatedPromo);
+
   // Try API backend
   try {
     const response = await fetch('/api/admin/promotions', {
@@ -291,6 +302,8 @@ export async function savePromotion(promo) {
  * @returns {Promise<boolean>} Success indicator
  */
 export async function deletePromotion(id) {
+  deletePromotionFromCloud(id);
+
   try {
     const response = await fetch(`/api/admin/promotions?id=${encodeURIComponent(id)}`, {
       method: 'DELETE'

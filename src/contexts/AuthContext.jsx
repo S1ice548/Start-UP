@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { loginWithSupabase, signUpWithSupabase, logoutSupabase } from '../services/supabaseService';
 
 // Create Auth Context
 const AuthContext = createContext(null);
@@ -35,17 +37,45 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Initialize from localStorage on mount
+  // Initialize from Supabase Session or localStorage on mount
   useEffect(() => {
-    const savedUser = localStorage.getItem('neenoi_auth_user');
-    if (savedUser) {
-      try {
-        setUser(JSON.parse(savedUser));
-      } catch (error) {
-        console.error('Error parsing saved user:', error);
+    async function initAuth() {
+      if (isSupabaseConfigured() && supabase) {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session?.user) {
+            const authUser = session.user;
+            const userData = {
+              id: authUser.id,
+              username: authUser.user_metadata?.username || authUser.email?.split('@')[0] || 'User',
+              email: authUser.email,
+              name: authUser.user_metadata?.username || authUser.email?.split('@')[0] || 'User',
+              role: authUser.user_metadata?.role || 'user',
+              loginTime: new Date().toISOString()
+            };
+            setUser(userData);
+            localStorage.setItem('neenoi_auth_user', JSON.stringify(userData));
+            setLoading(false);
+            return;
+          }
+        } catch (err) {
+          console.warn('Supabase auth session check failed:', err);
+        }
       }
+
+      // Fallback to local storage
+      const savedUser = localStorage.getItem('neenoi_auth_user');
+      if (savedUser) {
+        try {
+          setUser(JSON.parse(savedUser));
+        } catch (error) {
+          console.error('Error parsing saved user:', error);
+        }
+      }
+      setLoading(false);
     }
-    setLoading(false);
+
+    initAuth();
   }, []);
 
   const login = (userData) => {
@@ -56,6 +86,7 @@ export function AuthProvider({ children }) {
   const logout = () => {
     setUser(null);
     localStorage.removeItem('neenoi_auth_user');
+    logoutSupabase();
   };
 
   const loginWithCredentials = async (username, password) => {
@@ -66,7 +97,18 @@ export function AuthProvider({ children }) {
       throw new Error('กรุณากรอกชื่อผู้ใช้และรหัสผ่าน');
     }
 
-    // Attempt Server API
+    // 1. Attempt Supabase Auth Cloud DB
+    try {
+      const sbUser = await loginWithSupabase(cleanUsername, cleanPassword);
+      if (sbUser) {
+        login(sbUser);
+        return sbUser;
+      }
+    } catch (e) {
+      console.warn('Supabase login fallback:', e.message);
+    }
+
+    // 2. Attempt Local Server API
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
@@ -84,7 +126,7 @@ export function AuthProvider({ children }) {
       // Fallback to local
     }
 
-    // Default / Local accounts fallback
+    // 3. Default / Local accounts fallback
     const DEFAULT_ACCOUNTS = [
       { id: 'admin', username: 'admin', email: 'admin@neenoi.com', password: 'admin123', name: 'Admin User', role: 'admin' },
       { id: 'user1', username: 'user1', email: 'user1@neenoi.com', password: 'user123', name: 'User 1', role: 'user' },
@@ -133,7 +175,27 @@ export function AuthProvider({ children }) {
     if (isNaN(ageNum) || ageNum <= 0) throw new Error('อายุต้องมากกว่า 0');
     if (!cleanOccupation) throw new Error('กรุณาระบุอาชีพ');
 
-    // Attempt Server API first
+    // 1. Attempt Supabase Auth Cloud DB Registration
+    try {
+      const sbUser = await signUpWithSupabase({
+        username: cleanUsername,
+        password: cleanPassword,
+        gender: cleanGender,
+        age: ageNum,
+        occupation: cleanOccupation
+      });
+      if (sbUser) {
+        login(sbUser);
+        return sbUser;
+      }
+    } catch (err) {
+      if (err.message && err.message.includes('ถูกใช้งานแล้ว')) {
+        throw err;
+      }
+      console.warn('Supabase signup fallback:', err.message);
+    }
+
+    // 2. Attempt Server API
     try {
       const res = await fetch('/api/auth/signup', {
         method: 'POST',
@@ -148,7 +210,6 @@ export function AuthProvider({ children }) {
       });
       const data = await res.json();
       if (res.ok && data.ok && data.user) {
-        // Also persist locally for offline access
         if (data.user.profile) {
           saveStoredUserProfile(data.user.profile);
         }
@@ -161,10 +222,9 @@ export function AuthProvider({ children }) {
       if (err.message && !err.message.includes('fetch')) {
         throw err;
       }
-      // If network fetch failed, proceed with local fallback registration
     }
 
-    // Local Registration Fallback
+    // 3. Local Registration Fallback
     const DEFAULT_USERNAMES = ['admin', 'user1', 'user2', 'user3'];
     const registered = getStoredRegisteredUsers();
     if (
@@ -195,7 +255,6 @@ export function AuthProvider({ children }) {
       createdAt: new Date().toISOString()
     };
 
-    // Save into local storage
     const updatedRegistered = [newUser, ...registered];
     localStorage.setItem('neenoi_registered_users', JSON.stringify(updatedRegistered));
     saveStoredUserProfile(newProfile);

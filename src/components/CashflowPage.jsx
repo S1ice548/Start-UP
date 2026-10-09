@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { calculateDebtProgress, formatCurrency } from '../utils/debtEngine';
 import { exportPaymentHistoryToExcel } from '../utils/excelExport';
+import { fetchCashflowFromCloud, saveCashflowToCloud, subscribeToCashflow } from '../services/supabaseService';
 import { projectDailyLiquidity, buildCashflowRecommendations } from '../utils/cashflowEngine';
 
 // ---------- Projection SVG Chart (interactive balance visualization) ----------
@@ -219,41 +220,44 @@ export default function CashflowPage({
     return { income: 0, expense: 0, incomeDay: 1 };
   });
 
-  // Persist risk settings
+  // Load from Supabase Cloud DB & setup Realtime sync
+  useEffect(() => {
+    let active = true;
+    async function loadCloudCashflow() {
+      const data = await fetchCashflowFromCloud(userName);
+      if (data && active) {
+        if (data.entries) setCashflowEntries(data.entries);
+        if (data.startingBalance !== undefined) setStartingBalance(data.startingBalance);
+        if (data.monthlyBudget) setMonthlyBudget(data.monthlyBudget);
+      }
+    }
+    loadCloudCashflow();
+
+    const unsubscribe = subscribeToCashflow(userName, (cloudData) => {
+      if (!active) return;
+      if (cloudData.entries) setCashflowEntries(cloudData.entries);
+      if (cloudData.startingBalance !== undefined) setStartingBalance(cloudData.startingBalance);
+      if (cloudData.monthlyBudget) setMonthlyBudget(cloudData.monthlyBudget);
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [userName]);
+
+  // Persist risk settings & cashflow entries to LocalStorage & Supabase Cloud DB
   useEffect(() => {
     localStorage.setItem(`nee_noi_cashflow_${userName}_start_balance`, String(startingBalance));
-  }, [startingBalance, userName]);
-
-  useEffect(() => {
     localStorage.setItem(`nee_noi_cashflow_${userName}_monthly_budget`, JSON.stringify(monthlyBudget));
-  }, [monthlyBudget, userName]);
-
-  // Chart Categories (Predefined + User Custom)
-  const [expenseCategories] = useState([
-    { id: 'rent', name: 'ค่าเช่า/ค่าบ้าน', icon: '🏠', color: 'bg-rose-500' },
-    { id: 'food', name: 'อาหารและค่าอาหาร', icon: '🍜', color: 'bg-green-500' },
-    { id: 'transport', name: 'ค่าขนส่ง/น้ำมัน', icon: '🚗', color: 'bg-blue-500' },
-    { id: 'utilities', name: 'ค่าสาธารณูปโภค', icon: '💡', color: 'bg-yellow-500' },
-    { id: 'entertainment', name: 'บันเทิงและสันทนาการ', icon: '🎬', color: 'bg-purple-500' },
-    { id: 'debt_payment', name: 'จ่ายหนี้', icon: '💳', color: 'bg-red-500' },
-    { id: 'medical', name: 'ค่ารักษาพยาบาล', icon: '🏥', color: 'bg-indigo-500' },
-    { id: 'shopping', name: 'สินค้าอุปโภค', icon: '🛍️', color: 'bg-pink-500' },
-    { id: 'other', name: 'อื่นๆ', icon: '📝', color: 'bg-slate-500' }
-  ]);
-
-  const [incomeCategories] = useState([
-    { id: 'salary', name: 'เงินเดือน', icon: '💰', color: 'bg-emerald-500' },
-    { id: 'bonus', name: 'โบนัส/ค่าล่วง', icon: '🎯', color: 'bg-cyan-500' },
-    { id: 'freelance', name: 'งานฟรีแลนซ์', icon: '💻', color: 'bg-orange-500' },
-    { id: 'investment', name: 'ผลประโยชน์การลงทุน', icon: '📈', color: 'bg-teal-500' },
-    { id: 'gift', name: 'เงินที่รับ', icon: '🎁', color: 'bg-rose-500' },
-    { id: 'other_income', name: 'อื่นๆ', icon: '📝', color: 'bg-slate-500' }
-  ]);
-
-  // Auto-save cashflow entries
-  useEffect(() => {
     localStorage.setItem(`nee_noi_cashflow_${userName}`, JSON.stringify(cashflowEntries));
-  }, [cashflowEntries, userName]);
+
+    saveCashflowToCloud(userName, {
+      entries: cashflowEntries,
+      startingBalance,
+      monthlyBudget
+    });
+  }, [startingBalance, monthlyBudget, cashflowEntries, userName]);
 
   // ---- Deterministic 30-90 day liquidity projection & risk detection ----
   const projection = projectDailyLiquidity({

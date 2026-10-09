@@ -18,7 +18,8 @@ import MilestonesPage from './components/MilestonesPage';
 import PaymentHistoryPage from './components/PaymentHistoryPage';
 import RefinanceDashboard from './components/RefinanceDashboard';
 
-import { INITIAL_DEBTS, getViewDataForUser, saveUserDataToStorage, resetUserDataStorage } from './data/mockData';
+import { INITIAL_DEBTS, getViewDataForUser, saveUserDataToStorage, resetUserDataStorage, loadUserDataFromCloudOrStorage } from './data/mockData';
+import { subscribeToUserDebts } from './services/supabaseService';
 import { calculateDebtPayoff } from './utils/debtEngine';
 import {
   CheckCircle2,
@@ -82,7 +83,7 @@ function AppContent({ isAdmin, user, onLogout }) {
     localStorage.setItem('nee_noi_sidebar_open', String(sidebarOpen));
   }, [sidebarOpen]);
 
-  // Sync state when selected user or logged in user changes
+  // Sync state when selected user or logged in user changes & subscribe to Realtime Cloud DB updates
   React.useEffect(() => {
     if (!user) return;
 
@@ -90,20 +91,55 @@ function AppContent({ isAdmin, user, onLogout }) {
       setSelectedUserId('all');
     }
 
-    const nextUserId = isAdmin ? (selectedUserId || 'all') : user.id;
-    const nextData = getViewDataForUser(user.id, nextUserId);
+    let isSubscribed = true;
 
-    setViewData(nextData);
-    setDebts(nextData.debts || []);
-    setExtraBudget(nextData.extraBudget ?? 0);
-    setPaymentLogs(nextData.paymentLogs || []);
-    setSavedPlans(nextData.savedPlans || []);
-    setManualStrategy(nextData.strategy || null);
+    async function loadData() {
+      const nextUserId = isAdmin ? (selectedUserId || 'all') : user.id;
+      let nextData = getViewDataForUser(user.id, nextUserId);
+
+      // Async fetch from Supabase Cloud DB
+      if (nextUserId !== 'all' && nextUserId !== 'admin') {
+        const cloudData = await loadUserDataFromCloudOrStorage(nextUserId);
+        if (cloudData && isSubscribed) {
+          nextData = cloudData;
+        }
+      }
+
+      if (isSubscribed) {
+        setViewData(nextData);
+        setDebts(nextData.debts || []);
+        setExtraBudget(nextData.extraBudget ?? 0);
+        setPaymentLogs(nextData.paymentLogs || []);
+        setSavedPlans(nextData.savedPlans || []);
+        setManualStrategy(nextData.strategy || null);
+      }
+    }
+
+    loadData();
 
     if (!isAdmin && activeTab === 'admin') {
       setActiveTab('calculator');
     }
-  }, [user, isAdmin, selectedUserId]);
+
+    // Set up Supabase Realtime listener for live multi-device updates
+    let unsubscribeRealtime = () => {};
+    if (activeUserId && activeUserId !== 'admin' && activeUserId !== 'all') {
+      unsubscribeRealtime = subscribeToUserDebts(activeUserId, (updatedCloudData) => {
+        if (!isSubscribed) return;
+        setDebts(updatedCloudData.debts || []);
+        setExtraBudget(updatedCloudData.extraBudget ?? 0);
+        setPaymentLogs(updatedCloudData.paymentLogs || []);
+        setSavedPlans(updatedCloudData.savedPlans || []);
+        setManualStrategy(updatedCloudData.strategy || null);
+        showToast('⚡ ซิงก์ข้อมูลล่าสุดเรียบร้อยแล้ว');
+      });
+    }
+
+    return () => {
+      isSubscribed = false;
+      unsubscribeRealtime();
+    };
+  }, [user, isAdmin, selectedUserId, activeUserId]);
 
   // AUTO SAVE TO LOCALSTORAGE
   React.useEffect(() => {

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ShieldCheck, User, Lock, Eye, EyeOff, LogIn, UserPlus, Briefcase, Calendar, Users, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth, UNREADABLE_RESPONSE_MESSAGE } from '../contexts/AuthContext';
 
 const THAI_OCCUPATIONS = [
   'พนักงานเงินเดือน / พนักงานบริษัท',
@@ -19,6 +19,21 @@ const GENDER_OPTIONS = [
   { value: 'ไม่ระบุ', label: 'ไม่ระบุ' },
   { value: 'อื่นๆ', label: 'อื่นๆ' }
 ];
+
+/**
+ * Turn a thrown error into a message that is safe to show in the form.
+ * Raw parser errors ("Unexpected end of JSON input", "Unexpected token '<'…")
+ * are replaced with a readable Thai message so the form never crashes/prints
+ * technical English to the user.
+ */
+export function toFriendlyAuthError(err, fallbackMessage) {
+  const message = (err && err.message) || '';
+  const isBodyParseFailure =
+    err instanceof SyntaxError ||
+    /Unexpected end of JSON input|Unexpected token|not valid JSON|bad JSON/i.test(message);
+  if (isBodyParseFailure) return UNREADABLE_RESPONSE_MESSAGE;
+  return message || fallbackMessage;
+}
 
 export default function LoginPage({ onLoginSuccess }) {
   const { loginWithCredentials, signup } = useAuth();
@@ -65,7 +80,7 @@ export default function LoginPage({ onLoginSuccess }) {
         window.location.href = '/';
       }
     } catch (err) {
-      setError(err.message || 'เกิดข้อผิดพลาดในการเข้าสู่ระบบ');
+      setError(toFriendlyAuthError(err, 'เกิดข้อผิดพลาดในการเข้าสู่ระบบ'));
     } finally {
       setLoading(false);
     }
@@ -126,7 +141,8 @@ export default function LoginPage({ onLoginSuccess }) {
       }, 500);
 
     } catch (err) {
-      setError(err.message || 'เกิดข้อผิดพลาดในการลงทะเบียน');
+      // Never surface raw JSON parser errors — show a readable Thai message instead.
+      setError(toFriendlyAuthError(err, 'เกิดข้อผิดพลาดในการลงทะเบียน'));
       setLoading(false);
     }
   };

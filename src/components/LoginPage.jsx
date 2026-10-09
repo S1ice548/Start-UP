@@ -58,6 +58,7 @@ export default function LoginPage({ onLoginSuccess }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [warningMsg, setWarningMsg] = useState(''); // Supabase warnings (RLS / e-mail confirmation), never silent
 
   const finalOccupation = occupationSelect === 'อื่นๆ (ระบุเอง)' ? customOccupation : occupationSelect;
 
@@ -65,12 +66,19 @@ export default function LoginPage({ onLoginSuccess }) {
     e.preventDefault();
     setError('');
     setSuccessMsg('');
+    setWarningMsg('');
     setLoading(true);
 
     try {
       let userObj;
       if (loginWithCredentials) {
         userObj = await loginWithCredentials(loginUsername, loginPassword);
+      }
+
+      // Show Supabase warnings (e.g. profile row blocked by RLS) instead of
+      // failing silently.
+      if (Array.isArray(userObj?.warnings) && userObj.warnings.length) {
+        setWarningMsg(userObj.warnings.join(' '));
       }
       
       if (onLoginSuccess && userObj) {
@@ -90,6 +98,7 @@ export default function LoginPage({ onLoginSuccess }) {
     e.preventDefault();
     setError('');
     setSuccessMsg('');
+    setWarningMsg('');
 
     // Client-side validations
     if (!signupUsername.trim()) {
@@ -130,15 +139,33 @@ export default function LoginPage({ onLoginSuccess }) {
         });
       }
 
-      setSuccessMsg('สร้างบัญชีผู้ใช้สำเร็จกำลังนำท่านเข้าสู่ระบบ...');
-      
+      const warnings = Array.isArray(userObj?.warnings) ? userObj.warnings : [];
+      const needsEmailConfirm = Boolean(userObj) && userObj.sessionActive === false;
+
+      if (warnings.length) {
+        // e.g. user_profiles insert blocked by RLS / table missing -> readable Thai warning
+        setWarningMsg(warnings.join(' '));
+      }
+
+      if (needsEmailConfirm) {
+        // Account created in Supabase, but "Confirm email" is on: there is no
+        // session yet, so we must not pretend the user is signed in.
+        setSuccessMsg('สร้างบัญชีผู้ใช้ใน Supabase สำเร็จ! กรุณาตรวจสอบอีเมลเพื่อยืนยันตัวตน แล้วจึงเข้าสู่ระบบ');
+        setLoading(false);
+        return;
+      }
+
+      setSuccessMsg('สร้างบัญชีผู้ใช้สำเร็จ กำลังนำท่านเข้าสู่ระบบ...');
+
+      // Keep warnings on screen long enough to be read before redirecting.
+      const redirectDelay = warnings.length ? 4000 : 500;
       setTimeout(() => {
         if (onLoginSuccess && userObj) {
           onLoginSuccess(userObj);
         } else {
           window.location.href = '/';
         }
-      }, 500);
+      }, redirectDelay);
 
     } catch (err) {
       // Never surface raw JSON parser errors — show a readable Thai message instead.
@@ -184,6 +211,7 @@ export default function LoginPage({ onLoginSuccess }) {
                 setActiveTab('login');
                 setError('');
                 setSuccessMsg('');
+                setWarningMsg('');
               }}
               className={`py-2.5 text-sm font-extrabold rounded-xl transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer ${
                 activeTab === 'login'
@@ -200,6 +228,7 @@ export default function LoginPage({ onLoginSuccess }) {
                 setActiveTab('signup');
                 setError('');
                 setSuccessMsg('');
+                setWarningMsg('');
               }}
               className={`py-2.5 text-sm font-extrabold rounded-xl transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer ${
                 activeTab === 'signup'
@@ -224,6 +253,13 @@ export default function LoginPage({ onLoginSuccess }) {
             <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-start gap-2.5 animate-fadeIn">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
               <span>{successMsg}</span>
+            </div>
+          )}
+
+          {warningMsg && (
+            <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs font-bold flex items-start gap-2.5 animate-fadeIn">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <span>{warningMsg}</span>
             </div>
           )}
 

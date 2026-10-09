@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, isProductionBuild } from '../lib/supabase';
 import { loginWithSupabase, signUpWithSupabase, logoutSupabase } from '../services/supabaseService';
 
 // Create Auth Context
@@ -9,6 +9,12 @@ const AuthContext = createContext(null);
 // non-JSON body (instead of crashing the form with
 // "Unexpected end of JSON input").
 export const UNREADABLE_RESPONSE_MESSAGE = 'ไม่สามารถอ่านข้อมูลจากเซิร์ฟเวอร์ได้';
+
+// Shown when a production build (Vercel) has no Supabase configuration.
+// Deliberately NOT falling back to browser-local accounts: those would exist on
+// one device only and never sync to the central Supabase database.
+export const SUPABASE_NOT_CONFIGURED_MESSAGE =
+  'ระบบลงทะเบียนออนไลน์ (Supabase) ยังไม่ได้ตั้งค่าบนเซิร์ฟเวอร์นี้ — กรุณาตั้งค่า VITE_SUPABASE_URL และ VITE_SUPABASE_ANON_KEY แล้ว Deploy ใหม่';
 
 /**
  * Safely read a JSON response from the auth API.
@@ -91,7 +97,17 @@ export function AuthProvider({ children }) {
         }
       }
 
-      // Fallback to local storage
+      if (isSupabaseConfigured() && supabase) {
+        // Cloud mode: without a Supabase session the user is signed out.
+        // Drop any stale browser-local session so a device cannot pretend to
+        // be logged in with an account that only exists in this browser.
+        localStorage.removeItem('neenoi_auth_user');
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
+      // Local/dev fallback (Supabase not configured)
       const savedUser = localStorage.getItem('neenoi_auth_user');
       if (savedUser) {
         try {
@@ -125,17 +141,26 @@ export function AuthProvider({ children }) {
       throw new Error('กรุณากรอกชื่อผู้ใช้และรหัสผ่าน');
     }
 
-    // 1. Attempt Supabase Auth Cloud DB
-    try {
+    // Cloud mode: Supabase is the ONLY source of truth. Wrong credentials,
+    // unconfirmed e-mail, rate limits and connection errors are thrown as
+    // readable Thai messages and shown by the form — never silently ignored.
+    if (isSupabaseConfigured()) {
       const sbUser = await loginWithSupabase(cleanUsername, cleanPassword);
-      if (sbUser) {
-        login(sbUser);
-        return sbUser;
+      if (!sbUser) {
+        throw new Error('ไม่สามารถเข้าสู่ระบบกับ Supabase ได้ กรุณาลองใหม่อีกครั้ง');
       }
-    } catch (e) {
-      console.warn('Supabase login fallback:', e.message);
+      const { warnings, ...session } = sbUser;
+      login(session);
+      return { ...session, warnings };
     }
 
+    // A production build without Supabase must not authenticate against
+    // browser-local accounts (they never sync across devices).
+    if (isProductionBuild()) {
+      throw new Error(SUPABASE_NOT_CONFIGURED_MESSAGE);
+    }
+
+    // ---- Local/dev mode only (Supabase not configured) ----
     // 2. Attempt Local Server API
     try {
       const res = await fetch('/api/auth/login', {
@@ -210,8 +235,11 @@ export function AuthProvider({ children }) {
     if (isNaN(ageNum) || ageNum <= 0) throw new Error('อายุต้องมากกว่า 0');
     if (!cleanOccupation) throw new Error('กรุณาระบุอาชีพ');
 
-    // 1. Attempt Supabase Auth Cloud DB Registration
-    try {
+    // Cloud mode: create the account in Supabase ONLY. Supabase errors
+    // (duplicate username, invalid e-mail, connection failure, RLS block, ...)
+    // surface as readable Thai messages — the form must never fall back to a
+    // browser-local account that would not exist on any other device.
+    if (isSupabaseConfigured()) {
       const sbUser = await signUpWithSupabase({
         username: cleanUsername,
         password: cleanPassword,
@@ -219,17 +247,22 @@ export function AuthProvider({ children }) {
         age: ageNum,
         occupation: cleanOccupation
       });
-      if (sbUser) {
-        login(sbUser);
-        return sbUser;
+      if (!sbUser) {
+        throw new Error('ไม่สามารถสมัครสมาชิกกับ Supabase ได้ กรุณาลองใหม่อีกครั้ง');
       }
-    } catch (err) {
-      if (err.message && err.message.includes('ถูกใช้งานแล้ว')) {
-        throw err;
+      const { warnings, sessionActive, ...session } = sbUser;
+      if (sessionActive !== false) {
+        login(session);
       }
-      console.warn('Supabase signup fallback:', err.message);
+      return { ...session, warnings, sessionActive };
     }
 
+    // A production build without Supabase must not create local-only accounts.
+    if (isProductionBuild()) {
+      throw new Error(SUPABASE_NOT_CONFIGURED_MESSAGE);
+    }
+
+    // ---- Local/dev mode only (Supabase not configured) ----
     // 2. Attempt Server API
     try {
       const res = await fetch('/api/auth/signup', {

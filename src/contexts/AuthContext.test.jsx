@@ -4,7 +4,7 @@
  * proxy answers with an empty body, an HTML error page, or no content-type.
  */
 import { describe, it, expect } from 'vitest';
-import { readJsonResponse, UNREADABLE_RESPONSE_MESSAGE } from './AuthContext';
+import { readJsonResponse, UNREADABLE_RESPONSE_MESSAGE, SUPABASE_NOT_CONFIGURED_MESSAGE } from './AuthContext';
 
 describe('readJsonResponse', () => {
   it('parses a valid application/json body', async () => {
@@ -68,5 +68,13 @@ describe('readJsonResponse', () => {
 describe('UNREADABLE_RESPONSE_MESSAGE', () => {
   it('is the readable Thai message shown in the UI', () => {
     expect(UNREADABLE_RESPONSE_MESSAGE).toBe('ไม่สามารถอ่านข้อมูลจากเซิร์ฟเวอร์ได้');
+  });
+});
+
+describe('SUPABASE_NOT_CONFIGURED_MESSAGE', () => {
+  it('is a readable Thai message used when a production build lacks Supabase env', () => {
+    expect(SUPABASE_NOT_CONFIGURED_MESSAGE).toMatch(/[\u0E00-\u0E7F]/);
+    expect(SUPABASE_NOT_CONFIGURED_MESSAGE).toMatch(/VITE_SUPABASE_URL/);
+    expect(SUPABASE_NOT_CONFIGURED_MESSAGE).toMatch(/VITE_SUPABASE_ANON_KEY/);
   });
 });

@@ -668,4 +668,71 @@ describe('Authentication & User Profiles API', () => {
   });
 });
 
+describe('Auth API always answers with a valid JSON body', () => {
+  const signupPayload = (overrides = {}) => ({
+    username: `json_body_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
+    password: 'password123',
+    gender: 'หญิง',
+    age: 25,
+    occupation: 'ฟรีแลนซ์',
+    ...overrides
+  });
 
+  const postJson = (route, body) =>
+    fetch(`${baseUrl}${route}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: typeof body === 'string' ? body : JSON.stringify(body)
+    });
+
+  it('POST /api/auth/signup success -> application/json + parseable object', async () => {
+    const res = await postJson('/api/auth/signup', signupPayload());
+    expect(res.status).toBe(201);
+    expect(res.headers.get('content-type')).toContain('application/json');
+    // res.json() would throw "Unexpected end of JSON input" on an empty body
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+    expect(data.user.username).toBeTruthy();
+    expect(data.user.profile.age).toBe(25);
+  });
+
+  it('POST /api/auth/signup validation failure -> JSON error object (never empty)', async () => {
+    const res = await postJson('/api/auth/signup', signupPayload({ age: -3 }));
+    expect(res.status).toBe(400);
+    expect(res.headers.get('content-type')).toContain('application/json');
+    const data = await res.json();
+    expect(data.ok).toBe(false);
+    expect(typeof data.error).toBe('string');
+    expect(data.error.length).toBeGreaterThan(0);
+  });
+
+  it('POST /api/auth/signup with a malformed JSON body -> JSON 400', async () => {
+    const res = await postJson('/api/auth/signup', '{ this is not json');
+    expect(res.status).toBe(400);
+    expect(res.headers.get('content-type')).toContain('application/json');
+    const data = await res.json();
+    expect(data.ok).toBe(false);
+    expect(typeof data.error).toBe('string');
+  });
+
+  it('POST /api/auth/login success and failure -> both parseable JSON', async () => {
+    const okRes = await postJson('/api/auth/login', { username: 'user1', password: 'user123' });
+    expect(okRes.status).toBe(200);
+    expect(okRes.headers.get('content-type')).toContain('application/json');
+    expect((await okRes.json()).ok).toBe(true);
+
+    const badRes = await postJson('/api/auth/login', { username: 'user1', password: 'wrong' });
+    expect(badRes.status).toBe(401);
+    expect(badRes.headers.get('content-type')).toContain('application/json');
+    expect((await badRes.json()).ok).toBe(false);
+  });
+
+  it('unknown /api route -> JSON 404 instead of an empty response body', async () => {
+    const res = await postJson('/api/definitely-not-a-route', { anything: true });
+    expect(res.status).toBe(404);
+    expect(res.headers.get('content-type')).toContain('application/json');
+    const data = await res.json();
+    expect(data.ok).toBe(false);
+    expect(typeof data.error).toBe('string');
+  });
+});

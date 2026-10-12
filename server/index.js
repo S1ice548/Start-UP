@@ -907,10 +907,28 @@ function setCors(res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
 
+/**
+ * Write a JSON response. Every API route answers through this helper so the
+ * client can always call response.json() safely: never an empty body and never
+ * a bare res.end(). Serialisation failures are downgraded to a JSON 500 instead
+ * of producing a broken/empty response.
+ */
 function sendJson(res, status, payload) {
+  let body;
+  try {
+    body = JSON.stringify(payload);
+  } catch (err) {
+    console.error('[server] Failed to serialise JSON response:', err.message);
+    status = 500;
+    body = JSON.stringify({ ok: false, error: 'Response could not be serialised to JSON' });
+  }
+
   setCors(res);
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(payload));
+  if (res.writableEnded || res.destroyed) return; // socket already finished/closed
+  if (!res.headersSent) {
+    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+  }
+  res.end(body);
 }
 
 function readJsonBody(req) {
@@ -1342,6 +1360,13 @@ const server = http.createServer(async (req, res) => {
   } catch (err) {
     console.error(`[server] ${req.method} ${route} failed:`, err.message);
     return sendJson(res, err.status || 500, { ok: false, error: err.message });
+  } finally {
+    // Safety net: an /api handler that returns without writing a body would
+    // otherwise leave an empty response (clients then crash with
+    // "Unexpected end of JSON input"). Always answer with JSON instead.
+    if (route.startsWith('/api/') && !res.writableEnded && !res.headersSent) {
+      sendJson(res, 500, { ok: false, error: `Empty response for ${req.method} ${route}` });
+    }
   }
 });
 

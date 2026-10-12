@@ -5,6 +5,34 @@ import { loginWithSupabase, signUpWithSupabase, logoutSupabase } from '../servic
 // Create Auth Context
 const AuthContext = createContext(null);
 
+// Readable Thai message shown when the server answers with an empty or
+// non-JSON body (instead of crashing the form with
+// "Unexpected end of JSON input").
+export const UNREADABLE_RESPONSE_MESSAGE = 'ไม่สามารถอ่านข้อมูลจากเซิร์ฟเวอร์ได้';
+
+/**
+ * Safely read a JSON response from the auth API.
+ *
+ * Checks the Content-Type header BEFORE parsing and catches malformed/empty
+ * bodies, so `response.json()` can never throw
+ * "Unexpected end of JSON input" at the call site.
+ *
+ * @param {Response} response
+ * @returns {Promise<{ readable: boolean, data: object|null }>}
+ */
+export async function readJsonResponse(response) {
+  const contentType = response?.headers?.get?.('content-type');
+  if (!contentType || !contentType.includes('application/json')) {
+    return { readable: false, data: null };
+  }
+  try {
+    return { readable: true, data: await response.json() };
+  } catch (err) {
+    console.warn('[auth] Could not parse JSON response body:', err?.message);
+    return { readable: false, data: null };
+  }
+}
+
 export function getStoredRegisteredUsers() {
   try {
     const raw = localStorage.getItem('neenoi_registered_users');
@@ -115,15 +143,22 @@ export function AuthProvider({ children }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: cleanUsername, password: cleanPassword })
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.ok && data.user) {
-          login(data.user);
-          return data.user;
-        }
+
+      // Guarded parsing: check the content-type and catch empty/invalid bodies
+      // so response.json() can never crash the login form.
+      const { readable, data } = await readJsonResponse(res);
+      if (!readable) {
+        // Server claimed success but sent a body we cannot read -> Thai error.
+        if (res.ok) throw new Error(UNREADABLE_RESPONSE_MESSAGE);
+        // Server/proxy failure (e.g. backend offline) -> fall back to local accounts.
+        console.warn(`[auth] /api/auth/login returned a non-JSON body (HTTP ${res.status}) — falling back to local accounts`);
+      } else if (res.ok && data.ok && data.user) {
+        login(data.user);
+        return data.user;
       }
-    } catch {
-      // Fallback to local
+    } catch (err) {
+      if (err?.message === UNREADABLE_RESPONSE_MESSAGE) throw err;
+      // Network / other failures: fall through to the local accounts fallback
     }
 
     // 3. Default / Local accounts fallback
@@ -208,8 +243,21 @@ export function AuthProvider({ children }) {
           occupation: cleanOccupation
         })
       });
-      const data = await res.json();
-      if (res.ok && data.ok && data.user) {
+
+      // Guarded parsing: check the content-type and catch empty/invalid bodies so
+      // response.json() can never throw "Unexpected end of JSON input".
+      const { readable, data } = await readJsonResponse(res);
+
+      if (!readable) {
+        if (res.ok) {
+          // HTTP 2xx but the body is empty/invalid -> surface a Thai error instead
+          // of crashing the form with a raw parser message.
+          throw new Error(UNREADABLE_RESPONSE_MESSAGE);
+        }
+        // Server/proxy failure (e.g. backend not running) -> keep going and use
+        // the local registration fallback below.
+        console.warn(`[auth] /api/auth/signup returned a non-JSON body (HTTP ${res.status}) — falling back to local registration`);
+      } else if (res.ok && data.ok && data.user) {
         if (data.user.profile) {
           saveStoredUserProfile(data.user.profile);
         }
@@ -219,6 +267,9 @@ export function AuthProvider({ children }) {
         throw new Error(data.error);
       }
     } catch (err) {
+      // Re-throw readable errors (Thai validation errors, unreadable-response
+      // message); swallow network failures ("fetch failed") to keep the local
+      // registration fallback.
       if (err.message && !err.message.includes('fetch')) {
         throw err;
       }

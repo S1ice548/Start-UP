@@ -33,22 +33,27 @@ export const DEBT_SCHEMA = {
   required: ['issuerName', 'debtCategory', 'totalBalance', 'minimumPayment', 'dueDate', 'interestRate']
 };
 
-// Canonical Thai bank list used by forms
+// Canonical Thai bank / creditor list used by forms
+// Simplified into broader, user-friendly categories — specific sub-products
+// don't affect calculation math (only name, balance, rate, and payment matter).
 export const MAJOR_THAI_BANKS = [
+  // === หนี้ธนาคารพาณิชย์ (Commercial Bank Debt) ===
   'ธนาคารกสิกรไทย (KBank)',
   'ธนาคารไทยพาณิชย์ (SCB)',
   'ธนาคารกรุงไทย (KTB)',
   'ธนาคารกรุงศรีอยุธยา (Krungsri)',
   'ธนาคารกรุงเทพ (BBL)',
   'ธนาคารทหารไทยธนชาต (ttb)',
+  // === หนี้ธนาคารรัฐ (Government Bank Debt) ===
   'ธนาคารออมสิน (GSB)',
   'ธนาคารอาคารสงเคราะห์ (ธอส)',
-  'ธนาคารซีไอเอ็มบี ไทย (CIMBT)',
-  'ธนาคารยูโอบี (UOB)',
+  'ธนาคารเพื่อการเกษตรและสหกรณ์ (ธกส)',
+  // === สถาบันการเงินอื่น (Non-Bank Financial Institution) ===
   'อิออน (AEON)',
-  'เฟิร์สช้อยส์ (Krungsri First Choice)',
-  'เซ็นทรัล เดอะวัน (Central The 1)',
-  'บัตรเครดิต KTC',
+  'ธนาคารยูโอบี (UOB)',
+  'ซิตี้แบงก์ / GE Money',
+  // === หนี้นอกระบบ / เจ้าหนี้ส่วนตัว ===
+  'เจ้าหนี้ส่วนตัว / นอกระบบ',
   'อื่นๆ'
 ];
 

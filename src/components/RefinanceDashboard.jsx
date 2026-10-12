@@ -9,7 +9,6 @@ import {
   Briefcase,
   Banknote,
   Wallet,
-  MapPin,
   ShieldCheck,
   Percent,
   Target,
@@ -19,8 +18,6 @@ import {
   Trophy
 } from 'lucide-react';
 import { formatBaht, OCCUPATIONS } from '../utils/refinanceCalculator';
-import { getProvinceRateInfo } from '../data/provinceRateModifiers';
-import { THAI_PROVINCES } from '../data/thaiProvinces';
 import { getPromotions, getOccupations, PROPERTY_TYPES } from '../services/refinancePromotionService';
 import { findBestMatch, hasUsableBestMatch } from '../utils/bestMatchEngine';
 import BankLogo from './BankLogo';
@@ -56,9 +53,8 @@ const MRTA_OPTIONS = [
  *   1. Select existing home loan  (dropdown: A/B balance, remaining tenure, current rate)
  *   2. Select occupation          (from master data)
  *   3. Monthly income
- *   4. Province                   (77 Thai provinces)
- *   5. Top-up / cash-out          → target_loan_amount = balance + top-up
- *   6. MRTA option                [Yes / No]
+ *   4. Top-up / cash-out          → target_loan_amount = balance + top-up
+ *   5. MRTA option                [Yes / No]
  *   → Smart Best-Match: single recommendation card with external redirect.
  */
 export default function RefinanceDashboard({ userName = 'User', onBack, ocrDebts = [] }) {
@@ -90,7 +86,6 @@ export default function RefinanceDashboard({ userName = 'User', onBack, ocrDebts
       occupation: 'salaried',
       customOccupation: '',
       monthlyIncome: 30000,
-      province: '',
       topUpAmount: 0,
       wantMRTA: true
     };
@@ -224,8 +219,6 @@ export default function RefinanceDashboard({ userName = 'User', onBack, ocrDebts
       currentRate: Number(loan?.interestRate || loan?.rate || 0) || prev.currentRate
     }));
   };
-
-  const provinceInfo = form.province ? getProvinceRateInfo(form.province) : null;
 
   // ---------- Render ----------
   return (
@@ -452,31 +445,7 @@ export default function RefinanceDashboard({ userName = 'User', onBack, ocrDebts
           />
         </div>
 
-        {/* 4. Province (77 provinces) */}
-        <div>
-          <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
-            <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">4</span>
-            <MapPin className="w-3.5 h-3.5 text-emerald-600" />
-            จังหวัดที่ตั้งบ้าน (77 จังหวัด)
-          </label>
-          <select
-            value={form.province || ''}
-            onChange={(e) => setForm({ ...form, province: e.target.value })}
-            className="input-dark text-sm cursor-pointer w-full"
-          >
-            <option value="">— เลือกจังหวัด —</option>
-            {THAI_PROVINCES.map(p => (
-              <option key={p} value={p}>{p}</option>
-            ))}
-          </select>
-          {provinceInfo && (
-            <p className="text-[11px] text-amber-700 font-bold mt-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
-              📍 {form.province}: {provinceInfo.label} {provinceInfo.modifier > 0 ? `(+${provinceInfo.modifier}%)` : '(อัตราต่ำสุด)'}
-            </p>
-          )}
-        </div>
-
-        {/* 5. Top-up / cash-out → target loan amount */}
+        {/* 4. Top-up / cash-out → target loan amount */}
         <div>
           <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
             <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">5</span>
@@ -500,10 +469,10 @@ export default function RefinanceDashboard({ userName = 'User', onBack, ocrDebts
           </div>
         </div>
 
-        {/* 6. MRTA option */}
+        {/* 5. MRTA option */}
         <div>
           <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center gap-1.5">
-            <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">6</span>
+            <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-black flex items-center justify-center">5</span>
             <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
             ประกัน MRTA
           </label>
@@ -683,8 +652,8 @@ export default function RefinanceDashboard({ userName = 'User', onBack, ocrDebts
                 <div className="text-sm font-black text-slate-900">{selectedOccupationLabel}</div>
               </div>
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                <div className="text-[10px] text-slate-500 font-bold">จังหวัด / MRTA</div>
-                <div className="text-sm font-black text-slate-900">{form.province || '-'} • {form.wantMRTA ? 'ทำ MRTA' : 'ไม่ทำ MRTA'}</div>
+                <div className="text-[10px] text-slate-500 font-bold">MRTA</div>
+                <div className="text-sm font-black text-slate-900">{form.wantMRTA ? '✅ ทำ MRTA' : '❌ ไม่ทำ MRTA'}</div>
               </div>
             </div>
             <p className="text-[11px] text-slate-500 font-medium">

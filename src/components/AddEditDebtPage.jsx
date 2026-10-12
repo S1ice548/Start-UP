@@ -188,8 +188,9 @@ export default function AddEditDebtPage({ editingDebt, onSave, onCancel }) {
     onSave(debtPayload);
   };
 
+  // Interest preview uses daily formula to match engine: (balance × annualRate / 365) × 30 days
   const estimatedMonthlyInterest = currentBalance && interestRatePercent
-    ? Math.round((parseFloat(currentBalance) * (parseFloat(interestRatePercent) / 100)) / 12)
+    ? Math.round((parseFloat(currentBalance) * (parseFloat(interestRatePercent) / 100) / 365) * 30)
     : 0;
 
   return (

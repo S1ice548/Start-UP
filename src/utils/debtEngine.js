@@ -6,9 +6,9 @@
 export const STRATEGIES_INFO = {
   avalanche: {
     key: "avalanche",
-    name: "Avalanche (หิมะถล่ม)",
-    outcomeLabel: "💰 ปิดหนี้เสียดอกต่ำสุด",
-    description: "เน้นโปะหนี้ที่ดอกเบี้ยแพงที่สุดก่อน ประหยัดดอกเบี้ยมากที่สุดในทางคณิตศาสตร์",
+    name: "ปิดหนี้ที่จ่ายดอกเบี้ยแพง",
+    outcomeLabel: "💰 ปิดหนี้ที่จ่ายดอกเบี้ยแพง",
+    description: "เน้นโปะหนี้ก้อนที่มีดอกเบี้ยแพงที่สุดก่อนเสมอ ช่วยประหยัดเงินดอกเบี้ยรวมได้มากที่สุดในระยะยาว",
     badgeColor: "bg-red-500/20 text-red-300 border-red-500/30"
   },
   snowball: {
@@ -253,6 +253,11 @@ function simulatePayoff(initialDebts, extraMonthlyBudget, strategy) {
   // Custom Sorter per Strategy
   const sortDebts = (list) => list.sort(strategyComparator(strategy));
 
+  // Track the simulation month index relative to the real calendar month
+  const startDate = new Date();
+  const startYear = startDate.getFullYear();
+  const startMonth = startDate.getMonth(); // 0-indexed
+
   while (monthCount < MAX_MONTHS) {
     const activeDebts = currentDebts.filter(d => d.balance > 0);
     if (activeDebts.length === 0) break;
@@ -261,11 +266,17 @@ function simulatePayoff(initialDebts, extraMonthlyBudget, strategy) {
     let totalMonthlyInterestThisMonth = 0;
     let extraAvailable = Number(extraMonthlyBudget);
 
-    // Step 1: Add monthly interest
+    // Step 1: Add interest using DAILY basis formula:
+    //   Interest = (Remaining Principal × Annual Rate / 365) × Days in Month
+    // This accurately reflects real-world Thai bank accrual instead of a simple ÷12 average.
+    const simYear = startYear + Math.floor((startMonth + monthCount - 1) / 12);
+    const simMonth = (startMonth + monthCount - 1) % 12; // 0-indexed
+    const daysInMonth = new Date(simYear, simMonth + 1, 0).getDate();
+
     currentDebts.forEach(d => {
       if (d.balance > 0) {
-        const monthlyRate = (d.interestRate / 100) / 12;
-        const interest = d.balance * monthlyRate;
+        const dailyRate = (d.interestRate / 100) / 365;
+        const interest = d.balance * dailyRate * daysInMonth;
         d.balance += interest;
         d.totalInterestPaidOnThis += interest;
         totalMonthlyInterestThisMonth += interest;

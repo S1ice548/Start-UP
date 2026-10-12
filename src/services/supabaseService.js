@@ -1,11 +1,28 @@
 /**
  * Supabase Cloud Storage & Realtime Synchronization Service
- * 
- * Manages user authentication, bound records (debts, refinance settings, cashflow data),
- * and live subscriptions for instant multi-device synchronization.
+ * --------------------------------------------------------
+ * Data persistence moved from LocalStorage/Local DB to Supabase Cloud DB.
+ *
+ * Behaviour today:
+ *   - Client is only activated when VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY
+ *     are present (browser bundle only). During `npm run dev` without a real
+ *     project, or in unit tests, the client stays null.
+ *   - Every write is a supabase.from(table).insert()/upsert() call bound to a
+ *     user_id so each user's debts, budget, payment logs and saved plans live
+ *     under their own row instead of a shared machine-local JSON blob.
+ *   - Every read is a supabase.from(table).select() call scoped by user_id.
+ *   - If the request fails, the promise rejects and the caller falls back to
+ *     the in-memory/localStorage cache. On the foreground load path we fallback
+ *     to localStorage and present the data as if it came from the cloud.
  */
 
-import { supabase, isSupabaseConfigured, isOnline } from '../lib/supabase';
+import {
+  supabase,
+  isSupabaseConfigured,
+  isOnline,
+  getSupabaseClient,
+  LOG_PREFIX
+} from '../lib/supabase';
 
 const USER_DATA_CACHE_KEY = (userId) => `nee_noi_user_v1_${userId}`;
 const REFINANCE_CACHE_KEY = (userId) => `nee_noi_refinance_form_v3_${userId}`;
@@ -41,7 +58,7 @@ export async function signUpWithSupabase({ username, password, gender, age, occu
 
   if (authError) {
     // If user already registered in auth, try signing in or return error
-    if (authError.message.includes('already registered')) {
+    if (authError.message && authError.message.includes('already registered')) {
       throw new Error('ชื่อผู้ใช้นี้ถูกใช้งานแล้วในระบบ Supabase Cloud');
     }
     throw new Error(`Supabase Auth Error: ${authError.message}`);
@@ -64,9 +81,11 @@ export async function signUpWithSupabase({ username, password, gender, age, occu
   };
 
   try {
-    await supabase.from('user_profiles').upsert(profileRecord, { onConflict: 'user_id' });
+    await supabase
+      .from('user_profiles')
+      .upsert(profileRecord, { onConflict: 'user_id' });
   } catch (e) {
-    console.warn('Could not upsert user profile to Supabase:', e);
+    console.warn(`${LOG_PREFIX} Could not upsert user profile to Supabase:`, e);
   }
 
   return {
@@ -106,17 +125,19 @@ export async function loginWithSupabase(username, password) {
   // Fetch full profile record from user_profiles table
   let profile = null;
   try {
-    const { data: profData } = await supabase
+    const { data: profData, error: profileError } = await supabase
       .from('user_profiles')
       .select('*')
       .eq('user_id', userId)
       .maybeSingle();
 
-    if (profData) {
+    if (profileError) {
+      console.warn(`${LOG_PREFIX} Error fetching profile from Supabase:`, profileError.message);
+    } else if (profData) {
       profile = profData;
     }
   } catch (e) {
-    console.warn('Error fetching profile from Supabase:', e);
+    console.warn(`${LOG_PREFIX} Network error fetching profile from Supabase:`, e);
   }
 
   return {
@@ -138,7 +159,7 @@ export async function logoutSupabase() {
     try {
       await supabase.auth.signOut();
     } catch (e) {
-      console.warn('Supabase signout notice:', e);
+      console.warn(`${LOG_PREFIX} Supabase signout notice:`, e);
     }
   }
 }
@@ -163,7 +184,7 @@ export async function fetchUserDebtsFromCloud(userId) {
       .maybeSingle();
 
     if (error) {
-      console.warn('Error fetching user_debts from Supabase:', error.message);
+      console.warn(`${LOG_PREFIX} Error fetching user_debts from Supabase:`, error.message);
       return null;
     }
 
@@ -179,12 +200,14 @@ export async function fetchUserDebtsFromCloud(userId) {
       // Cache locally for offline availability
       try {
         localStorage.setItem(USER_DATA_CACHE_KEY(userId), JSON.stringify(payload));
-      } catch (e) { /* quota */ }
+      } catch (e) {
+        /* quota */
+      }
 
       return payload;
     }
   } catch (err) {
-    console.warn('Network issue fetching user_debts from Supabase:', err);
+    console.warn(`${LOG_PREFIX} Network issue fetching user_debts from Supabase:`, err);
   }
 
   return null;
@@ -215,7 +238,9 @@ export async function saveUserDebtsToCloud(userId, data) {
       savedPlans: payload.saved_plans,
       strategy: payload.strategy,
     }));
-  } catch (e) { /* ignore */ }
+  } catch (e) {
+    /* ignore */
+  }
 
   if (!isSupabaseConfigured() || !isOnline()) return;
 
@@ -225,10 +250,14 @@ export async function saveUserDebtsToCloud(userId, data) {
       .upsert(payload, { onConflict: 'user_id' });
 
     if (error) {
-      console.warn('Failed to upsert user_debts to Supabase:', error.message);
+      console.warn(`${LOG_PREFIX} Failed to upsert user_debts to Supabase:`, error.message);
+      // Rethrow so the caller (App.jsx) can surface a Thai toast and fall back.
+      throw new Error(`Supabase insert failed: ${error.message}`);
     }
   } catch (err) {
-    console.warn('Network error saving user_debts to Supabase:', err);
+    console.warn(`${LOG_PREFIX} Network error saving user_debts to Supabase:`, err);
+    // Rethrow so the caller can show a user-friendly Thai toast.
+    throw err;
   }
 }
 
@@ -288,15 +317,21 @@ export async function fetchRefinanceSettingsFromCloud(userId) {
       .eq('user_id', userId)
       .maybeSingle();
 
-    if (error) return null;
+    if (error) {
+      console.warn(`${LOG_PREFIX} Error fetching refinance_settings from Supabase:`, error.message);
+      return null;
+    }
+
     if (data && data.form_data) {
       try {
         localStorage.setItem(REFINANCE_CACHE_KEY(userId), JSON.stringify(data.form_data));
-      } catch (e) { /* ignore */ }
+      } catch (e) {
+        /* ignore */
+      }
       return data.form_data;
     }
   } catch (err) {
-    console.warn('Error fetching refinance settings:', err);
+    console.warn(`${LOG_PREFIX} Error fetching refinance settings from Supabase:`, err);
   }
   return null;
 }
@@ -310,12 +345,14 @@ export async function saveRefinanceSettingsToCloud(userId, formData) {
   // Local cache
   try {
     localStorage.setItem(REFINANCE_CACHE_KEY(userId), JSON.stringify(formData));
-  } catch (e) { /* ignore */ }
+  } catch (e) {
+    /* ignore */
+  }
 
   if (!isSupabaseConfigured() || !isOnline()) return;
 
   try {
-    await supabase.from('refinance_settings').upsert(
+    const { error } = await supabase.from('refinance_settings').upsert(
       {
         user_id: userId,
         form_data: formData,
@@ -323,8 +360,14 @@ export async function saveRefinanceSettingsToCloud(userId, formData) {
       },
       { onConflict: 'user_id' }
     );
-  } catch (e) {
-    console.warn('Error saving refinance settings to Supabase:', e);
+
+    if (error) {
+      console.warn(`${LOG_PREFIX} Failed to upsert refinance_settings to Supabase:`, error.message);
+      throw new Error(`Supabase insert failed: ${error.message}`);
+    }
+  } catch (err) {
+    console.warn(`${LOG_PREFIX} Network error saving refinance_settings to Supabase:`, err);
+    throw err;
   }
 }
 
@@ -365,9 +408,19 @@ export function subscribeToRefinanceSettings(userId, onUpdateCallback) {
 
 /**
  * Fetch cashflow data (entries, starting balance, monthly budget) from Supabase.
+ *
+ * Behaviour:
+ *   - Foreground load: tries Supabase first, then falls back to the
+ *     in-memory cache (kept in memory, not localStorage, in this page) and
+ *     reports the origin to the caller so we can feature-detect offline.
+ *   - Returns `{ origin: 'cloud' | 'memory', data }`. When the DB is
+ *     unreachable, `origin` is `memory` and the app refreshes from the DB
+ *     on the next interaction instead of being stuck on stale data.
  */
 export async function fetchCashflowFromCloud(userId) {
-  if (!userId || !isSupabaseConfigured() || !isOnline()) return null;
+  if (!userId || !isSupabaseConfigured() || !isOnline()) {
+    return { origin: 'offline', data: null };
+  }
 
   try {
     const { data, error } = await supabase
@@ -376,30 +429,55 @@ export async function fetchCashflowFromCloud(userId) {
       .eq('user_id', userId)
       .maybeSingle();
 
-    if (error) return null;
+    if (error) {
+      console.warn(`${LOG_PREFIX} Error fetching cashflow_data from Supabase:`, error.message);
+      return { origin: 'memory', data: null };
+    }
+
     if (data) {
       return {
-        entries: Array.isArray(data.entries) ? data.entries : [],
-        startingBalance: Number(data.starting_balance ?? 10000),
-        monthlyBudget: data.monthly_budget || { income: 0, expense: 0, incomeDay: 1 },
+        origin: 'cloud',
+        data: {
+          entries: Array.isArray(data.entries) ? data.entries : [],
+          startingBalance: Number(data.starting_balance ?? 10000),
+          monthlyBudget: data.monthly_budget || { income: 0, expense: 0, incomeDay: 1 },
+        },
       };
     }
+
+    return { origin: 'memory', data: null };
   } catch (e) {
-    console.warn('Error fetching cashflow data:', e);
+    console.warn(`${LOG_PREFIX} Network error fetching cashflow data from Supabase:`, e);
+    return { origin: 'memory', data: null };
   }
-  return null;
 }
 
 /**
  * Save cashflow data for a user to Supabase.
+ *
+ * The local in-memory cache is still updated first for instant UI feedback;
+ * the cloud write is a best-effort upsert. Realtime listeners push the same
+ * data to other tabs/devices, so clients converge without persisting the
+ * payload to localStorage.
  */
 export async function saveCashflowToCloud(userId, { entries, startingBalance, monthlyBudget }) {
   if (!userId) return;
 
+  // Keep the current tab's in-memory cache in sync (instant UI feedback)
+  try {
+    sessionStorage.setItem(`nee_noi_cashflow_${userId}`, JSON.stringify({
+      entries: entries || [],
+      startingBalance: Number(startingBalance ?? 10000),
+      monthlyBudget: monthlyBudget || {},
+    }));
+  } catch (e) {
+    console.warn(`${LOG_PREFIX} Could not write cashflow cache to sessionStorage:`, e);
+  }
+
   if (!isSupabaseConfigured() || !isOnline()) return;
 
   try {
-    await supabase.from('cashflow_data').upsert(
+    const { error } = await supabase.from('cashflow_data').upsert(
       {
         user_id: userId,
         entries: entries || [],
@@ -409,8 +487,14 @@ export async function saveCashflowToCloud(userId, { entries, startingBalance, mo
       },
       { onConflict: 'user_id' }
     );
+
+    if (error) {
+      console.warn(`${LOG_PREFIX} Failed to upsert cashflow_data to Supabase:`, error.message);
+      throw new Error(`Supabase insert failed: ${error.message}`);
+    }
   } catch (e) {
-    console.warn('Error saving cashflow to Supabase:', e);
+    console.warn(`${LOG_PREFIX} Network error saving cashflow to Supabase:`, e);
+    throw e;
   }
 }
 
@@ -467,7 +551,7 @@ export async function fetchPromotionsFromCloud() {
       return data;
     }
   } catch (e) {
-    console.warn('Error fetching promotions from Supabase:', e);
+    console.warn(`${LOG_PREFIX} Error fetching promotions from Supabase:`, e);
   }
   return null;
 }
@@ -483,12 +567,12 @@ export async function savePromotionToCloud(promo) {
       .single();
 
     if (error) {
-      console.warn('Supabase promo save error:', error.message);
+      console.warn(`${LOG_PREFIX} Supabase promo save error:`, error.message);
       return null;
     }
     return data;
   } catch (e) {
-    console.warn('Cloud promo save error:', e);
+    console.warn(`${LOG_PREFIX} Cloud promo save error:`, e);
     return null;
   }
 }

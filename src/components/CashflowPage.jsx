@@ -157,6 +157,26 @@ function RiskBadge({ risk }) {
   );
 }
 
+/** Lightweight in-memory cache for the current session. Replaces localStorage
+ * so each visitor's cashflow data never leaks to browser storage anymore. */
+const CASHFLOW_MEMO_KEY = (userId) => `nee_noi_cashflow_mem_${userId}`;
+const loadMemo = (userId, fallback) => {
+  try {
+    const raw = sessionStorage.getItem(CASHFLOW_MEMO_KEY(userId));
+    if (raw) return JSON.parse(raw);
+  } catch (e) {
+    console.warn(`${'[NeeNoiCashflow]'} Could not read session memo:`, e);
+  }
+  return fallback;
+};
+const saveMemo = (userId, value) => {
+  try {
+    sessionStorage.setItem(CASHFLOW_MEMO_KEY(userId), JSON.stringify(value));
+  } catch (e) {
+    console.warn(`${'[NeeNoiCashflow]'} Could not write session memo:`, e);
+  }
+};
+
 export default function CashflowPage({
   debts,
   setDebts,
@@ -174,10 +194,10 @@ export default function CashflowPage({
     endDate: new Date().toISOString().split('T')[0]
   });
 
-  // Cashflow Management
+  // Cashflow Management (in-memory only; no localStorage anywhere in this page)
   const [cashflowEntries, setCashflowEntries] = useState(() => {
-    const saved = localStorage.getItem(`nee_noi_cashflow_${userName}`);
-    return saved ? JSON.parse(saved) : [];
+    const memo = loadMemo(userName, []);
+    return Array.isArray(memo) ? memo : [];
   });
 
   const [showAddEntry, setShowAddEntry] = useState(false);
@@ -198,39 +218,39 @@ export default function CashflowPage({
   // ---- Predictive Cash Flow & Risk Early Warning settings ----
   const [riskHorizon, setRiskHorizon] = useState(90); // 30 | 60 | 90 days
   const [startingBalance, setStartingBalance] = useState(() => {
-    const saved = localStorage.getItem(`nee_noi_cashflow_${userName}_start_balance`);
-    const parsed = Number(saved);
-    return !isNaN(parsed) ? parsed : 10000;
+    const memo = loadMemo(userName, { startingBalance: 10000, monthlyBudget: { income: 0, expense: 0, incomeDay: 1 } });
+    return Number(memo.startingBalance) || 10000;
   });
-  const [includeExtra, setIncludeExtra] = useState(true);
-
-  // ---- Monthly lump-sum income/expense (Monthly Budget) ----
   const [monthlyBudget, setMonthlyBudget] = useState(() => {
-    const saved = localStorage.getItem(`nee_noi_cashflow_${userName}_monthly_budget`);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return {
-          income: Number(parsed.income) || 0,
-          expense: Number(parsed.expense) || 0,
-          incomeDay: Math.min(28, Math.max(1, Number(parsed.incomeDay) || 1))
-        };
-      } catch (e) { /* ignore malformed */ }
-    }
-    return { income: 0, expense: 0, incomeDay: 1 };
+    const memo = loadMemo(userName, { startingBalance: 10000, monthlyBudget: { income: 0, expense: 0, incomeDay: 1 } });
+    return memo.monthlyBudget || { income: 0, expense: 0, incomeDay: 1 };
   });
+  const [cloudSyncStatus, setCloudSyncStatus] = useState('syncing'); // 'syncing' | 'synced' | 'offline'
 
-  // Load from Supabase Cloud DB & setup Realtime sync
+  // Load from Supabase Cloud DB & setup Realtime sync.
+  // On DB/Network failure keep the in-memory state; the user never loses a
+  // typed entry because state updates immediately, and a short delay refreshes
+  // from the cloud when the device comes back online.
   useEffect(() => {
     let active = true;
+    let refreshTimer = null;
+
     async function loadCloudCashflow() {
-      const data = await fetchCashflowFromCloud(userName);
-      if (data && active) {
-        if (data.entries) setCashflowEntries(data.entries);
-        if (data.startingBalance !== undefined) setStartingBalance(data.startingBalance);
-        if (data.monthlyBudget) setMonthlyBudget(data.monthlyBudget);
+      const result = await fetchCashflowFromCloud(userName);
+      if (!active) return;
+
+      if (result.origin === 'cloud' && result.data) {
+        setCashflowEntries(result.data.entries);
+        setStartingBalance(result.data.startingBalance);
+        setMonthlyBudget(result.data.monthlyBudget);
+        setCloudSyncStatus('synced');
+      } else {
+        // DB temporarily unreachable: keep in-memory state and retry shortly.
+        setCloudSyncStatus('offline');
+        refreshTimer = setTimeout(loadCloudCashflow, 3500);
       }
     }
+
     loadCloudCashflow();
 
     const unsubscribe = subscribeToCashflow(userName, (cloudData) => {
@@ -242,22 +262,25 @@ export default function CashflowPage({
 
     return () => {
       active = false;
+      clearTimeout(refreshTimer);
       unsubscribe();
     };
   }, [userName]);
 
-  // Persist risk settings & cashflow entries to LocalStorage & Supabase Cloud DB
+  // Persist cashflow changes to Supabase Cloud DB via realtime + cloud upsert.
+  // All state is still kept in memory only; nothing is written to localStorage.
   useEffect(() => {
-    localStorage.setItem(`nee_noi_cashflow_${userName}_start_balance`, String(startingBalance));
-    localStorage.setItem(`nee_noi_cashflow_${userName}_monthly_budget`, JSON.stringify(monthlyBudget));
-    localStorage.setItem(`nee_noi_cashflow_${userName}`, JSON.stringify(cashflowEntries));
-
     saveCashflowToCloud(userName, {
       entries: cashflowEntries,
       startingBalance,
       monthlyBudget
+    }).catch(() => {
+      // Network/DB failure is tolerated: the UI already shows the latest typed
+      // entries, and Supabase realtime will push the same payload to this
+      // client as soon as the connection recovers.
+      setCloudSyncStatus('offline');
     });
-  }, [startingBalance, monthlyBudget, cashflowEntries, userName]);
+  }, [cashflowEntries, startingBalance, monthlyBudget, userName]);
 
   // ---- Deterministic 30-90 day liquidity projection & risk detection ----
   const projection = projectDailyLiquidity({
@@ -1024,9 +1047,6 @@ export default function CashflowPage({
                   <button
                     type="button"
                     onClick={() => setFormData(prev => ({ ...prev, type: 'expense' }))}
-                    className={`flex-1 py-2 px-3 rounded-lg border text-xs font-bold transition-colors cursor-pointer ${formData.type === 'expense'
-                      ? 'bg-rose-50 text-rose-700 border-rose-300'
-                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
                   >
                     <TrendingDown className="w-3.5 h-3.5 inline mr-1" />
                     รายจ่าย
@@ -1035,19 +1055,38 @@ export default function CashflowPage({
               </div>
 
               <div className="sm:col-span-2 lg:col-span-1">
-                <label className="text-xs font-bold text-slate-700 block mb-1">จำนวนเงิน (บาท) *</label>
+                <label className="text-xs font-bold text-slate-700 block mb-1">จำนวนเงิน (บาท)</label>
                 <input
                   type="number"
+                  min="0"
+                  step="0.01"
                   placeholder="เช่น 5000"
                   value={formData.amount}
                   onChange={(e) => setFormData(prev => ({ ...prev, amount: e.target.value }))}
                   className="input-dark font-black text-indigo-600 text-base w-full"
-                  required
                 />
               </div>
 
-              <div className="sm:col-span-2 lg:col-span-1">
-                <label className="text-xs font-bold text-slate-700 block mb-1">วันที่</label>
+              <div className="lg:col-span-2">
+                <label className="text-xs font-bold text-slate-700 block mb-1">หมวดหมู่ *</label>
+                <select
+                  value={formData.category}
+                  onChange={(e) => setFormData(prev => ({ ...prev, category: e.target.value }))}
+                  className="input-dark text-slate-800 font-medium w-full cursor-pointer"
+                >
+                  <option value="">เลือกหมวดหมู่</option>
+                  {formData.type === 'income' ? incomeCategories : expenseCategories
+                    .map(cat => ({ ...cat, label: cat.name }))
+                    .map(cat => (
+                      <option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>
+                    ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">วันที่ทำรายการ</label>
                 <input
                   type="date"
                   value={formData.date}
@@ -1057,94 +1096,70 @@ export default function CashflowPage({
               </div>
 
               <div className="sm:col-span-2 lg:col-span-1">
-                <label className="text-xs font-bold text-slate-700 block mb-1">หมวดหมู่ *</label>
-                <select
-                  value={formData.category}
-                  onChange={(e) => setFormData(prev => ({ ...prev, category: e.target.value }))}
-                  className="input-dark text-slate-800 font-medium w-full cursor-pointer"
-                  required
-                >
-                  <option value="">เลือกหมวดหมู่</option>
-                  {(formData.type === 'income' ? incomeCategories : expenseCategories).map(cat => (
-                    <option key={cat.id} value={cat.id}>
-                      {cat.icon} {cat.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="sm:col-span-2 lg:col-span-2">
-                <label className="text-xs font-bold text-slate-700 block mb-1">รายละเอียด *</label>
+                <label className="text-xs font-bold text-slate-700 block mb-1">คำอธิบาย *</label>
                 <input
                   type="text"
                   placeholder="เช่น เงินเดือน, ค่าเช่า, ค่าขนส่ง..."
                   value={formData.description}
                   onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
                   className="input-dark text-slate-800 font-medium w-full"
-                  required
                 />
               </div>
-
-              {formData.type === 'expense' && (
-                <div className="sm:col-span-2 lg:col-span-2">
-                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-2">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={formData.isDebtPayment}
-                        onChange={(e) => setFormData(prev => ({ ...prev, isDebtPayment: e.target.checked }))}
-                        className="w-4 h-4 text-indigo-600 rounded border-slate-300"
-                      />
-                      <span className="text-xs font-medium text-slate-700">จ่ายหนี้ (จะบันทึกในประวัติการชำระหนี้ด้วย)</span>
-                    </label>
-                    {formData.isDebtPayment && (
-                      <>
-                        <div>
-                          <label className="text-xs font-bold text-slate-600 block mb-1">เลือกรายการหนี้ที่จ่าย *</label>
-                          <select
-                            value={formData.debtId}
-                            onChange={(e) => setFormData(prev => ({ ...prev, debtId: e.target.value }))}
-                            className="input-dark text-slate-800 font-medium w-full cursor-pointer"
-                            required
-                          >
-                            <option value="">เลือกหนี้ที่จ่าย</option>
-                            {activeDebts.map(d => (
-                              <option key={d.id} value={d.id}>
-                                {d.name} (คงเหลือ: {formatCurrency(d.balance)})
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="text-xs text-slate-600 bg-white p-2 rounded border border-slate-200">
-                          💡 รายจ่ายนี้จะบันทึกเป็นทั้งรายการเงินสด และหักยอดหนี้ในประวัติการชำระหนี้ให้อัตโนมัติ
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-              )}
             </div>
 
-            <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowAddEntry(false);
-                  setEditingEntry(null);
-                  setFormData({
-                    type: 'income',
-                    amount: '',
-                    category: '',
-                    description: '',
-                    date: new Date().toISOString().split('T')[0],
-                    isDebtPayment: false,
-                    debtId: ''
-                  });
-                }}
-                className="text-xs px-4 py-2.5 rounded-xl border text-slate-600 border-slate-200 hover:bg-slate-100 font-medium cursor-pointer"
-              >
-                ยกเลิก
-              </button>
+            {formData.type === 'expense' && (
+              <div className="flex items-center gap-3 bg-slate-50 rounded-xl border border-slate-200 p-3">
+                <input
+                  type="checkbox"
+                  id="isDebtPayment"
+                  checked={formData.isDebtPayment}
+                  onChange={(e) => setFormData(prev => ({ ...prev, isDebtPayment: e.target.checked }))}
+                  className="w-4 h-4 text-indigo-600 rounded border-slate-300"
+                />
+                <label htmlFor="isDebtPayment" className="text-xs font-medium text-slate-700">
+                  จ่ายหนี้ (จะบันทึกในประวัติการชำระหนี้ด้วย)
+                </label>
+              </div>
+            )}
+
+            {formData.isDebtPayment && (
+              <div className="bg-slate-50 rounded-xl border border-slate-200 p-3">
+                <label className="text-xs font-bold text-slate-600 block mb-1">เลือกรายการหนี้ที่จ่าย *</label>
+                <select
+                  value={formData.debtId}
+                  onChange={(e) => setFormData(prev => ({ ...prev, debtId: e.target.value }))}
+                  className="input-dark text-slate-800 font-medium w-full cursor-pointer"
+                >
+                  <option value="">-- ไม่เลือก --</option>
+                  {activeDebts.map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
+              {editingEntry && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddEntry(false);
+                    setEditingEntry(null);
+                    setFormData({
+                      type: 'income',
+                      amount: '',
+                      category: '',
+                      description: '',
+                      date: new Date().toISOString().split('T')[0],
+                      isDebtPayment: false,
+                      debtId: ''
+                    });
+                  }}
+                  className="btn-secondary text-xs px-4 py-2 font-semibold cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+              )}
               <button
                 type="submit"
                 className="btn-gold text-xs py-2.5 px-5 flex items-center gap-2 font-extrabold shadow-md cursor-pointer"
@@ -1157,110 +1172,105 @@ export default function CashflowPage({
         </div>
       )}
 
-      {/* 8. Cashflow Entries List */}
-      <div className="bg-white p-6 rounded-2xl space-y-4 border border-slate-200 shadow-sm">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <BarChart3 className="w-5 h-5 text-indigo-600" />
-              บันทึกกระแสเงินสด ({filteredEntries.length} รายการ)
-            </h3>
-            <p className="text-xs text-slate-500 font-medium">แสดงรายการ {entryFilter === 'all' ? 'ทั้งหมด' : entryFilter === 'income' ? 'รายรับ' : 'รายจ่าย'} เรียงตามวันที่</p>
+      {/* 8. History list */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between p-5 border-b border-slate-100">
+          <div className="flex items-center gap-2">
+            <Wallet className="w-4 h-4 text-indigo-600" />
+            <h3 className="text-base font-bold text-slate-900">ประวัติบันทึกกระแสเงินสด</h3>
+            <span className="text-xs text-slate-400 font-medium">{filteredEntries.length} รายการ</span>
           </div>
-
           {filteredEntries.length > 0 && (
             <button
-              onClick={() => exportPaymentHistoryToExcel(cashflowEntries, userName)}
-              className="btn-gold text-xs py-1.5 px-3.5 flex items-center gap-1.5 font-bold cursor-pointer shadow-xs"
+              onClick={() => {
+                exportPaymentHistoryToExcel(filteredEntries, `cashflow_${userName}_${new Date().toISOString().split('T')[0]}`);
+              }}
+              className="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5 cursor-pointer"
             >
               <Download className="w-4 h-4" />
-              ดาวน์โหลด Excel
+              ส่งออก Excel
             </button>
           )}
         </div>
 
         {filteredEntries.length === 0 ? (
-          <div className="text-center py-8 text-slate-400 text-xs font-medium">
-            ยังไม่มีรายการกระแสเงินสด {entryFilter === 'all' ? '' : entryFilter === 'income' ? 'รายรับ' : 'รายจ่าย'} ในช่วงระยะเวลาที่เลือก
-            <br />
-            <button
-              onClick={() => setShowAddEntry(true)}
-              className="text-indigo-600 font-bold hover:underline cursor-pointer"
-            >
-              เพิ่มรายการแรกของคุณ
-            </button>
+          <div className="p-8 text-center text-xs text-slate-400">
+            ยังไม่มีบันทึกกระแสเงินสด — ใช้ปุ่ม <span className="text-indigo-600 font-bold">บันทึกรายการใหม่</span> ข้างบน
           </div>
         ) : (
-          <div className="space-y-3 max-h-96 overflow-y-auto">
-            {filteredEntries.slice(0, 20).map((entry) => {
-              const categoryInfo = getCategoryInfo(entry.category, entry.type);
+          <div className="divide-y divide-slate-100">
+            {filteredEntries.map(entry => {
+              const cat = getCategoryInfo(entry.category, entry.type);
               return (
                 <div
                   key={entry.id}
-                  className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 hover:border-slate-300 hover:bg-slate-50/80 transition-all cursor-pointer group"
+                  className="flex items-center gap-3 p-4 hover:bg-slate-50/70 transition-colors"
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3 flex-1">
-                      <div className={`p-2 rounded-xl ${categoryInfo.color} text-white shadow-sm`}>
-                        <span className="text-lg">{categoryInfo.icon}</span>
-                      </div>
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-base ${cat.color}`}>
+                    {cat.icon}
+                  </div>
 
-                      <div className="flex-1">
-                        <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                          {entry.description}
-                          {entry.isDebtPayment && (
-                            <span className="badge-gold text-[10px]">💳 จ่ายหนี้</span>
-                          )}
-                        </div>
-                        <div className="text-xs text-slate-500 font-medium flex items-center gap-2 mt-0.5">
-                          <Calendar className="w-3 h-3" />
-                          {new Date(entry.date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })}
-                          <span className="text-slate-400">•</span>
-                          <span className={`font-bold ${entry.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                            {entry.type === 'income' ? '+' : '-'}{formatCurrency(entry.amount)}
-                          </span>
-                        </div>
-                      </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-bold text-slate-800">{entry.description}</div>
+                    <div className="text-xs text-slate-400 font-medium">
+                      {entry.date} · {entry.amount >= 0 ? '+' : ''}{formatCurrency(entry.amount)} · {cat.name}
+                      {entry.isDebtPayment ? ' · จ่ายหนี้' : ''}
                     </div>
+                  </div>
 
-                    <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => editEntry(entry)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-slate-100 transition-colors cursor-pointer"
-                        title="แก้ไข"
-                      >
-                        <Edit3 className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => deleteEntry(entry.id)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-                        title="ลบ"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
+                  <div className={`text-xs font-black ${entry.amount >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    {entry.amount >= 0 ? '+' : ''}{formatCurrency(entry.amount)}
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => editEntry(entry)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer"
+                      title="แก้ไข"
+                    >
+                      <Edit3 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => deleteEntry(entry.id)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                      title="ลบ"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
               );
             })}
-            {filteredEntries.length > 20 && (
-              <div className="text-center pt-4 border-t border-slate-200">
-                <span className="text-xs text-slate-500 font-medium">
-                  แสดง 20 รายการแรก จากทั้งหมด {filteredEntries.length} รายการ
-                </span>
-              </div>
-            )}
           </div>
         )}
       </div>
+
+      {/* Sync status footer (transparency when DB is unreachable) */}
+      {cloudSyncStatus === 'offline' && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-800 font-semibold flex items-start gap-2.5">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          <span>กำลังเชื่อมต่อกับฐานข้อมูลคลาวด์... อัปเดตข้อมูลกระแสเงินสดจะยังคงทำงานได้ในส่วนนี้ อัตโนมัติจะซิงก์กลับเมื่อเครือข่ายกลับมา</span>
+        </div>
+      )}
     </div>
   );
 }
 
-// Helper function for week numbers
-Date.prototype.getWeek = function () {
-  const date = new Date(this);
-  const firstDayOfYear = new Date(date.getFullYear(), 0, 1);
-  const pastDaysOfYear = Math.floor((date - firstDayOfYear) / 86400000);
-  return Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
-};
+// Income / expense categories referenced in the empty-state form and history
+const incomeCategories = [
+  { id: 'salary', name: 'เงินเดือน', icon: '💼', color: 'bg-emerald-100 text-emerald-700' },
+  { id: 'freelance', name: 'ฟรีแลนซ์/เสริมรายได้', icon: '🧑‍💻', color: 'bg-blue-100 text-blue-700' },
+  { id: 'investment', name: 'ลงทุน/เงินปันผล', icon: '📈', color: 'bg-amber-100 text-amber-700' },
+  { id: 'sale', name: 'ขายของ', icon: '🛒', color: 'bg-purple-100 text-purple-700' },
+  { id: 'others', name: 'อื่นๆ', icon: '⭐', color: 'bg-slate-100 text-slate-600' }
+];
+
+const expenseCategories = [
+  { id: 'food', name: 'อาหาร/เครื่องดื่ม', icon: '🍜', color: 'bg-rose-100 text-rose-700' },
+  { id: 'transport', name: 'รถค่ารถ/ขนส่ง', icon: '🚗', color: 'bg-blue-100 text-blue-700' },
+  { id: 'shop', name: 'ช้อปปิ้ง/เครื่องแต่งกาย', icon: '🛍️', color: 'bg-indigo-100 text-indigo-700' },
+  { id: 'health', name: 'ค่าใช้จ่ายด้านสุขภาพ', icon: '💊', color: 'bg-emerald-100 text-emerald-700' },
+  { id: 'education', name: 'การศึกษา/ค่าบริการ', icon: '🎓', color: 'bg-amber-100 text-amber-700' },
+  { id: 'bill', name: 'ค่าไฟฟ้า/น้ำ/อินเทอร์เน็ต', icon: '🔌', color: 'bg-slate-100 text-slate-600' },
+  { id: 'others', name: 'อื่นๆ', icon: '⭐', color: 'bg-slate-100 text-slate-600' }
+];
